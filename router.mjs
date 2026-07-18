@@ -12,6 +12,23 @@ export const reasoningEfforts = {
   sol: "high",
 };
 
+function responseFooterEnabled() {
+  return process.env.ROUTER_RESPONSE_FOOTER !== "0";
+}
+
+export function responseFooterLine(selectedModel, reasoningEffort) {
+  return `Router 实际选择：${selectedModel}｜推理强度：${reasoningEffort}`;
+}
+
+function responseFooterInstruction(selectedModel, reasoningEffort) {
+  const footer = responseFooterLine(selectedModel, reasoningEffort);
+  return [
+    "Only when producing the final user-facing answer, append the following exact text as one separate final line.",
+    "Do not append it to tool calls, intermediate updates, or structured data.",
+    footer,
+  ].join("\n");
+}
+
 const manualModes = [
   { mode: "luna", markers: ["[省钱]", "[luna]", "/luna"] },
   { mode: "terra", markers: ["[均衡]", "[terra]", "/terra"] },
@@ -105,6 +122,7 @@ export function routeRequest(body) {
   const classification = classifyTask(userText);
   const selectedModel = models[classification.mode];
   const reasoningEffort = reasoningEfforts[classification.mode];
+  const footerLine = responseFooterLine(selectedModel, reasoningEffort);
   const routedBody = {
     ...body,
     model: selectedModel,
@@ -113,6 +131,14 @@ export function routeRequest(body) {
       effort: reasoningEffort,
     },
   };
+
+  if (responseFooterEnabled()) {
+    const existingInstructions = typeof body.instructions === "string" ? body.instructions.trim() : "";
+    routedBody.instructions = [
+      existingInstructions,
+      responseFooterInstruction(selectedModel, reasoningEffort),
+    ].filter(Boolean).join("\n\n");
+  }
 
   if (Object.hasOwn(body, "reasoning_effort")) {
     routedBody.reasoning_effort = reasoningEffort;
@@ -125,6 +151,7 @@ export function routeRequest(body) {
       requestedModel: MODEL_AUTO,
       selectedModel,
       reasoningEffort,
+      footerLine: responseFooterEnabled() ? footerLine : null,
       preview: userText.slice(0, 120).replace(/\s+/g, " "),
     },
   };

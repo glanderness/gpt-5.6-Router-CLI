@@ -30,6 +30,14 @@ BeefAPI
 
 Router 会同时改写模型和推理强度，并在响应结束后记录上游明确返回的实际模型、推理强度和用量。
 
+每次最终回答默认会单独附上一行：
+
+```text
+Router 实际选择：gpt-5.6-luna｜推理强度：low
+```
+
+这行内容来自本次 Router 的实际选择。工具调用和中间进度不会要求附加这一行。
+
 ## 环境要求
 
 - macOS 或 Linux
@@ -85,7 +93,10 @@ CODEX_BIN=/absolute/path/to/codex ./codex-router
 ROUTER_HOST=127.0.0.1
 ROUTER_PORT=8788
 ROUTER_UPSTREAM_BASE=https://beefapi.com/v1
+ROUTER_RESPONSE_FOOTER=1
 ```
+
+如果不需要回答末尾的 Router 标记，可以设置 `ROUTER_RESPONSE_FOOTER=0`。
 
 ## 只检查路由判断
 

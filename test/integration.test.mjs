@@ -108,7 +108,11 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.equal(streamLog.stream_protocol_complete, true);
   assert.deepEqual(receivedRequests.map((entry) => entry.model), ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-terra", "gpt-5.6-sol"]);
   assert.equal(receivedRequests[0].reasoning.effort, "low");
+  assert.match(receivedRequests[0].instructions, /Router 实际选择：gpt-5\.6-luna｜推理强度：low/);
   assert.equal(receivedRequests[1].reasoning.effort, "high");
+  assert.equal(receivedRequests[1].instructions, undefined);
   assert.equal(receivedRequests[2].reasoning.effort, "medium");
+  assert.match(receivedRequests[2].instructions, /Router 实际选择：gpt-5\.6-terra｜推理强度：medium/);
   assert.equal(receivedRequests[3].reasoning.effort, "high");
+  assert.match(receivedRequests[3].instructions, /Router 实际选择：gpt-5\.6-sol｜推理强度：high/);
 });

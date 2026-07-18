@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODEL_AUTO, classifyTask, extractLatestUserText, reasoningEfforts, routeRequest } from "../router.mjs";
+import { MODEL_AUTO, classifyTask, extractLatestUserText, reasoningEfforts, responseFooterLine, routeRequest } from "../router.mjs";
 
 test("manual mode has priority", () => {
   assert.equal(classifyTask("[最强] 帮我处理这个任务").mode, "sol");
@@ -55,9 +55,12 @@ test("only the auto model is routed", () => {
 });
 
 test("routing maps reasoning effort and preserves other reasoning fields", () => {
-  const luna = routeRequest({ model: MODEL_AUTO, input: "你好", reasoning: { effort: "high", summary: "auto" } });
+  const luna = routeRequest({ model: MODEL_AUTO, input: "你好", instructions: "Preserve this instruction.", reasoning: { effort: "high", summary: "auto" } });
   assert.equal(luna.decision.reasoningEffort, reasoningEfforts.luna);
   assert.deepEqual(luna.body.reasoning, { effort: "low", summary: "auto" });
+  assert.match(luna.body.instructions, /^Preserve this instruction\./);
+  assert.match(luna.body.instructions, /Router 实际选择：gpt-5\.6-luna｜推理强度：low/);
+  assert.equal(luna.decision.footerLine, responseFooterLine("gpt-5.6-luna", "low"));
 
   const terra = routeRequest({ model: MODEL_AUTO, input: "实现一个普通的 API 接口并运行测试", reasoning_effort: "low" });
   assert.equal(terra.body.model, "gpt-5.6-terra");
@@ -67,4 +70,18 @@ test("routing maps reasoning effort and preserves other reasoning fields", () =>
   const sol = routeRequest({ model: MODEL_AUTO, input: "请做一份 BTC 走势预测和投资分析研究报告" });
   assert.equal(sol.body.model, "gpt-5.6-sol");
   assert.equal(sol.body.reasoning.effort, "high");
+});
+
+test("response footer can be disabled without changing routing", () => {
+  const previous = process.env.ROUTER_RESPONSE_FOOTER;
+  process.env.ROUTER_RESPONSE_FOOTER = "0";
+  try {
+    const routed = routeRequest({ model: MODEL_AUTO, input: "你好", instructions: "Keep me." });
+    assert.equal(routed.body.model, "gpt-5.6-luna");
+    assert.equal(routed.body.instructions, "Keep me.");
+    assert.equal(routed.decision.footerLine, null);
+  } finally {
+    if (previous === undefined) delete process.env.ROUTER_RESPONSE_FOOTER;
+    else process.env.ROUTER_RESPONSE_FOOTER = previous;
+  }
 });
