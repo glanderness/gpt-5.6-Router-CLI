@@ -1,0 +1,14 @@
+{
+  "name": "gpt-5.6-router-cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A local Codex CLI router for GPT-5.6 Luna, Terra, and Sol.",
+  "type": "module",
+  "scripts": {
+    "start": "node server.mjs",
+    "test": "node --test"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

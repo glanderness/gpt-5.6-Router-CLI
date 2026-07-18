@@ -1,0 +1,80 @@
+{
+  "models": [
+    {
+      "slug": "gpt-5.6-router",
+      "display_name": "GPT-5.6 Router",
+      "description": "Routes Codex CLI tasks to GPT-5.6 Luna, Terra, or Sol.",
+      "prefer_websockets": false,
+      "support_verbosity": true,
+      "default_verbosity": "low",
+      "apply_patch_tool_type": "freeform",
+      "web_search_tool_type": "text_and_image",
+      "input_modalities": [
+        "text",
+        "image"
+      ],
+      "supports_image_detail_original": true,
+      "truncation_policy": {
+        "mode": "tokens",
+        "limit": 10000
+      },
+      "supports_parallel_tool_calls": true,
+      "tool_mode": "code_mode_only",
+      "multi_agent_version": "v2",
+      "use_responses_lite": false,
+      "include_skills_usage_instructions": false,
+      "auto_review_model_override": null,
+      "context_window": 372000,
+      "max_context_window": 372000,
+      "auto_compact_token_limit": null,
+      "comp_hash": "3000",
+      "reasoning_summary_format": "experimental",
+      "default_reasoning_summary": "none",
+      "default_reasoning_level": "low",
+      "supported_reasoning_levels": [
+        {
+          "effort": "low",
+          "description": "Fast responses with lighter reasoning"
+        },
+        {
+          "effort": "medium",
+          "description": "Balanced reasoning for everyday tasks"
+        },
+        {
+          "effort": "high",
+          "description": "Greater reasoning depth for complex tasks"
+        }
+      ],
+      "shell_type": "shell_command",
+      "visibility": "list",
+      "minimal_client_version": "0.144.0",
+      "supported_in_api": true,
+      "availability_nux": null,
+      "upgrade": null,
+      "priority": 0,
+      "supports_search_tool": true,
+      "base_instructions": "You are Codex, a coding agent. Work directly on the user's task and follow the active conversation instructions.",
+      "model_messages": {
+        "instructions_template": "You are Codex, a coding agent. Work directly on the user's task and follow the active conversation instructions.",
+        "instructions_variables": {
+          "personality_default": "",
+          "personality_friendly": "",
+          "personality_pragmatic": ""
+        },
+        "approvals": null
+      },
+      "experimental_supported_tools": [],
+      "available_in_plans": [
+        "free",
+        "plus",
+        "pro",
+        "business",
+        "team",
+        "enterprise"
+      ],
+      "default_service_tier": null,
+      "service_tiers": [],
+      "additional_speed_tiers": []
+    }
+  ]
+}

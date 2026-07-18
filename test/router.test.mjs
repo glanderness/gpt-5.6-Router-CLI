@@ -1,0 +1,70 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import { MODEL_AUTO, classifyTask, extractLatestUserText, reasoningEfforts, routeRequest } from "../router.mjs";
+
+test("manual mode has priority", () => {
+  assert.equal(classifyTask("[最强] 帮我处理这个任务").mode, "sol");
+  assert.equal(classifyTask("[省钱] 帮我改一句话").mode, "luna");
+  assert.equal(classifyTask("[均衡] 深度分析市场走势").mode, "terra");
+});
+
+test("greetings and simple tasks select luna", () => {
+  assert.equal(classifyTask("你好").mode, "luna");
+  assert.equal(classifyTask("Hello!").mode, "luna");
+  assert.equal(classifyTask("帮我润色这个标题").mode, "luna");
+  assert.equal(classifyTask("把这句话翻译成英文").mode, "luna");
+  assert.equal(classifyTask("总结这段话的三个要点").mode, "luna");
+  assert.equal(classifyTask("请只回复 OK").mode, "luna");
+  assert.equal(classifyTask("直接回答：1 + 1 等于几").mode, "luna");
+});
+
+test("normal scoped implementation selects terra", () => {
+  assert.equal(classifyTask("请修改单个文件中的按钮文案并验证显示").mode, "terra");
+  assert.equal(classifyTask("实现一个普通的 API 接口并运行测试").mode, "terra");
+  assert.equal(classifyTask("读取项目文件，帮我判断这个函数为什么报错").mode, "terra");
+});
+
+test("complex and high-stakes research tasks select sol", () => {
+  const result = classifyTask("从零搭建一个完整系统，包含架构设计、多文件实现、测试和部署验证");
+  assert.equal(result.mode, "sol");
+  assert.equal(classifyTask("请做一份 BTC 未来走势预测和投资分析研究报告").mode, "sol");
+  assert.equal(classifyTask("深度分析这个问题的根因").mode, "sol");
+  assert.equal(classifyTask("深度分析这个问题的根因，最后只回复结论").mode, "sol");
+});
+
+test("latest user message is used", () => {
+  const text = extractLatestUserText({
+    input: [
+      { role: "user", content: [{ type: "input_text", text: "旧任务" }] },
+      { role: "assistant", content: [{ type: "text", text: "回复" }] },
+      { role: "user", content: [{ type: "input_text", text: "新任务" }] },
+    ],
+  });
+  assert.equal(text, "新任务");
+});
+
+test("only the auto model is routed", () => {
+  const unchangedBody = { model: "gpt-5.6-sol", input: "hello", reasoning: { effort: "high" } };
+  const unchanged = routeRequest(unchangedBody);
+  assert.equal(unchanged.decision, null);
+  assert.equal(unchanged.body, unchangedBody);
+
+  const routed = routeRequest({ model: MODEL_AUTO, input: "帮我润色标题" });
+  assert.equal(routed.body.model, "gpt-5.6-luna");
+  assert.equal(routed.body.reasoning.effort, "low");
+});
+
+test("routing maps reasoning effort and preserves other reasoning fields", () => {
+  const luna = routeRequest({ model: MODEL_AUTO, input: "你好", reasoning: { effort: "high", summary: "auto" } });
+  assert.equal(luna.decision.reasoningEffort, reasoningEfforts.luna);
+  assert.deepEqual(luna.body.reasoning, { effort: "low", summary: "auto" });
+
+  const terra = routeRequest({ model: MODEL_AUTO, input: "实现一个普通的 API 接口并运行测试", reasoning_effort: "low" });
+  assert.equal(terra.body.model, "gpt-5.6-terra");
+  assert.equal(terra.body.reasoning.effort, "medium");
+  assert.equal(terra.body.reasoning_effort, "medium");
+
+  const sol = routeRequest({ model: MODEL_AUTO, input: "请做一份 BTC 走势预测和投资分析研究报告" });
+  assert.equal(sol.body.model, "gpt-5.6-sol");
+  assert.equal(sol.body.reasoning.effort, "high");
+});
