@@ -2,7 +2,7 @@
 
 一个专门为 Codex CLI 设计的本地模型 Router。它在 Codex CLI 和 BeefAPI 之间运行一个独立 HTTP 服务，根据任务复杂度选择 GPT-5.6 Luna、Terra 或 Sol。
 
-它不会修改 `~/.codex/config.toml`。只有通过 `./codex-router` 启动的 Codex CLI 会使用 Router，普通 `codex` 命令保持原样。
+它不会修改 `~/.codex/config.toml`。只有通过 `codex-router` 启动的 Codex CLI 会使用 Router，普通 `codex` 命令保持原样。
 
 ## 路由规则
 
@@ -47,47 +47,78 @@ Router 实际选择：gpt-5.6-luna｜推理强度：low
 
 Router 不保存 API key。Codex CLI 发出的认证信息会原样转发给 BeefAPI。
 
-## 快速开始
+## 一键初始化
 
 ```bash
-git clone https://github.com/glanderness/gpt-5.6-Router-CLI.git
-cd gpt-5.6-Router-CLI
-cp .env.example .env
-npm test
-chmod +x codex-router router-service.sh
+git clone https://github.com/glanderness/gpt-5.6-Router-CLI.git && cd gpt-5.6-Router-CLI && ./install.sh
+```
+
+安装脚本会自动：
+
+- 检查 Node.js、Codex CLI 和必要命令。
+- 创建独立安装目录和 `.env` 配置。
+- 安装 `codex-router`、`codex-router-service` 两个本地命令。
+- 启动 Router 服务并检查本地连接。
+- 保留已有 `.env`，可以重复运行完成升级。
+
+安装完成后，在任意目录运行：
+
+```bash
+codex-router
+```
+
+如果提示 `~/.local/bin` 不在 `PATH`，按照安装脚本输出的路径提示添加即可。
+
+只安装、不立即启动服务：
+
+```bash
+./install.sh --no-start
+```
+
+不进行全局安装，也可以继续直接运行仓库版本：
+
+```bash
 ./codex-router
 ```
 
 附带一条任务：
 
 ```bash
-./codex-router "帮我润色这个标题"
-./codex-router "[最强] 深度分析这个项目的架构"
+codex-router "帮我润色这个标题"
+codex-router "[最强] 深度分析这个项目的架构"
 ```
 
 非交互模式：
 
 ```bash
-./codex-router exec "请总结 README"
+codex-router exec "请总结 README"
 ```
 
 如果 Codex CLI 不在 `PATH` 中：
 
 ```bash
-CODEX_BIN=/absolute/path/to/codex ./codex-router
+CODEX_BIN=/absolute/path/to/codex ./install.sh
 ```
+
+也可以在安装后的 `.env` 中设置 `CODEX_BIN`。
 
 ## 管理独立服务
 
 ```bash
-./router-service.sh start
-./router-service.sh status
-./router-service.sh logs
-./router-service.sh restart
-./router-service.sh stop
+codex-router-service start
+codex-router-service status
+codex-router-service logs
+codex-router-service restart
+codex-router-service stop
 ```
 
-默认地址为 `http://127.0.0.1:8788`，默认上游为 `https://beefapi.com/v1`。可以在 `.env` 中调整：
+默认地址为 `http://127.0.0.1:8788`，默认上游为 `https://beefapi.com/v1`。全局安装后的配置文件位于：
+
+```text
+~/.local/share/gpt-5.6-router-cli/app/.env
+```
+
+可以在其中调整：
 
 ```dotenv
 ROUTER_HOST=127.0.0.1
@@ -97,6 +128,17 @@ ROUTER_RESPONSE_FOOTER=1
 ```
 
 如果不需要回答末尾的 Router 标记，可以设置 `ROUTER_RESPONSE_FOOTER=0`。
+
+## 升级
+
+在原仓库中运行：
+
+```bash
+git pull
+./install.sh
+```
+
+安装脚本会更新运行文件、保留现有 `.env`，并重新启动独立服务。
 
 ## 只检查路由判断
 
