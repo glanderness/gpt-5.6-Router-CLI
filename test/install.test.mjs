@@ -40,6 +40,7 @@ test("installer creates an isolated app and global command links", async (t) => 
   assert.match(installedEnvironment, new RegExp(`CODEX_BIN=${fakeCodex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   await access(path.join(appDir, "codex-router"), constants.X_OK);
   await access(path.join(appDir, "router-service.sh"), constants.X_OK);
+  await access(path.join(appDir, "auth-config.mjs"), constants.R_OK);
   await access(path.join(appDir, "router-signals.mjs"), constants.R_OK);
   await access(path.join(appDir, "router-policy.mjs"), constants.R_OK);
 
@@ -67,8 +68,37 @@ test("installer creates an isolated app and global command links", async (t) => 
     },
   });
   assert.equal(unconfigured.status, 0, unconfigured.stderr || unconfigured.stdout);
-  assert.match(unconfigured.stdout, /Next step: configure an upstream provider/);
-  assert.match(unconfigured.stdout, /--upstream-base https:\/\/api\.example\.com\/v1/);
+  assert.match(unconfigured.stdout, /Authentication: current Codex login/);
+  assert.match(unconfigured.stdout, /Upstream: https:\/\/chatgpt\.com\/backend-api\/codex/);
   const unconfiguredEnvironment = await readFile(path.join(unconfiguredAppDir, ".env"), "utf8");
   assert.match(unconfiguredEnvironment, /^ROUTER_UPSTREAM_BASE=$/m);
+
+  const providerAppDir = path.join(temporaryHome, "provider-app");
+  const providerBinDir = path.join(temporaryHome, "provider-bin");
+  const providerInstall = spawnSync("bash", [
+    path.join(projectDir, "install.sh"),
+    "--no-start",
+    "--upstream-base",
+    "https://provider.example.com/v1",
+    "--api-key-env",
+    "EXAMPLE_PROVIDER_KEY",
+  ], {
+    cwd: projectDir,
+    encoding: "utf8",
+    env: {
+      ...process.env,
+      HOME: temporaryHome,
+      CODEX_BIN: fakeCodex,
+      GPT_ROUTER_INSTALL_DIR: providerAppDir,
+      GPT_ROUTER_BIN_DIR: providerBinDir,
+      ROUTER_AUTH_MODE: "auto",
+      ROUTER_API_KEY: "",
+      EXAMPLE_PROVIDER_KEY: "provider-key",
+    },
+  });
+  assert.equal(providerInstall.status, 0, providerInstall.stderr || providerInstall.stdout);
+  assert.match(providerInstall.stdout, /Authentication: provider key from EXAMPLE_PROVIDER_KEY/);
+  const providerEnvironment = await readFile(path.join(providerAppDir, ".env"), "utf8");
+  assert.match(providerEnvironment, /^ROUTER_API_KEY_ENV=EXAMPLE_PROVIDER_KEY$/m);
+  assert.match(providerEnvironment, /^EXAMPLE_PROVIDER_KEY=provider-key$/m);
 });

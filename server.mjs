@@ -1,23 +1,19 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { Readable } from "node:stream";
+import { resolveAuthConfig } from "./auth-config.mjs";
 import { MODEL_AUTO, routeRequest } from "./router.mjs";
 
 const host = process.env.ROUTER_HOST || "localhost";
 const port = Number(process.env.ROUTER_PORT || 8788);
-const configuredUpstreamBase = String(process.env.ROUTER_UPSTREAM_BASE || "").trim();
+let authConfig = null;
 let upstreamBase = null;
 let upstreamConfigurationError = null;
-if (!configuredUpstreamBase) {
-  upstreamConfigurationError = "ROUTER_UPSTREAM_BASE is not configured. Set it to your provider's Responses API base URL, for example https://api.example.com/v1.";
-} else {
-  try {
-    const parsedUpstream = new URL(configuredUpstreamBase);
-    if (!['http:', 'https:'].includes(parsedUpstream.protocol)) throw new Error("unsupported protocol");
-    upstreamBase = configuredUpstreamBase.replace(/\/$/, "");
-  } catch {
-    upstreamConfigurationError = "ROUTER_UPSTREAM_BASE must be a valid http or https URL.";
-  }
+try {
+  authConfig = resolveAuthConfig(process.env);
+  upstreamBase = authConfig.upstreamBase;
+} catch (error) {
+  upstreamConfigurationError = error?.message || String(error);
 }
 const logRequests = process.env.ROUTER_LOG_REQUESTS === "1";
 const logTaskPreview = process.env.ROUTER_LOG_TASK_PREVIEW === "1";
@@ -158,7 +154,16 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
     if (logRequests) log("request_received", { method: request.method, path: url.pathname });
     if (request.method === "GET" && url.pathname === "/health") {
-      return sendJson(response, 200, { ok: true, service: "gpt5.6-router", upstreamConfigured: Boolean(upstreamBase) });
+      return sendJson(response, 200, {
+        ok: true,
+        service: "gpt5.6-router",
+        authMode: authConfig?.selectedMode || null,
+        authSource: authConfig?.authSource || null,
+        codexLoginMode: authConfig?.codexLoginMode || null,
+        upstreamBase,
+        upstreamConfigured: Boolean(upstreamBase),
+        configurationError: upstreamConfigurationError,
+      });
     }
     if (request.method === "POST" && url.pathname === "/router/decision") {
       const payload = JSON.parse((await readBody(request)).toString("utf8") || "{}");
@@ -239,4 +244,13 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, host, () => log("server_started", { host, port, upstream_configured: Boolean(upstreamBase) }));
+server.listen(port, host, () => log("server_started", {
+  host,
+  port,
+  auth_mode: authConfig?.selectedMode || null,
+  auth_source: authConfig?.authSource || null,
+  codex_login_mode: authConfig?.codexLoginMode || null,
+  upstream_base: upstreamBase,
+  upstream_configured: Boolean(upstreamBase),
+  configuration_error: upstreamConfigurationError,
+}));

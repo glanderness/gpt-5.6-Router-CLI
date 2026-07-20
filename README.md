@@ -2,7 +2,7 @@
 
 GPT5.6-Router 是一个面向 Codex CLI 的本地模型 Router。你只需在 Codex 中选择稳定模型标识 `gpt-5.6-router`，Router 就会根据任务复杂度，在 Luna、Terra 与 Sol 三档模型和推理强度之间自动选择。
 
-项目不绑定任何上游服务商。只要服务商兼容 OpenAI Responses API，就可以通过一个配置项接入。
+项目同时支持当前 Codex 登录和第三方 API。默认自动检测认证方式：检测到第三方 key 时使用对应服务商，否则读取 Codex 登录状态，在 ChatGPT/Plus 与 OpenAI API key 之间选择正确的官方上游。
 
 ```text
 Codex CLI
@@ -30,9 +30,9 @@ Your Responses API provider
 - macOS 或 Linux
 - Node.js 20+
 - Codex CLI 0.144.0+
-- 一个支持 OpenAI Responses API 的上游服务，并已确认你的 Codex CLI 可以调用它
+- ChatGPT/Plus 登录，或一个兼容 OpenAI Responses API 的第三方服务
 
-Router 不保存 API key；Codex CLI 发出的认证请求头会原样转发给你配置的上游服务。
+第三方 key 只保存在权限为 `600` 的本地 `.env` 中，不会写入项目或日志。
 
 ### 2. 获取项目并安装
 
@@ -41,20 +41,34 @@ Router 不保存 API key；Codex CLI 发出的认证请求头会原样转发给�
 ```bash
 git clone <repository-url>
 cd GPT5.6-Router
-./install.sh --upstream-base https://api.example.com/v1
+./install.sh
 ```
 
-把 `https://api.example.com/v1` 替换为你的服务商提供的 Responses API 根地址。
+如果 Codex CLI 当前使用 ChatGPT/Plus 登录，到这里已经完成。Router 会自动使用官方 ChatGPT Codex 上游。
+
+使用第三方 API 时：
+
+```bash
+./install.sh --upstream-base https://api.example.com/v1 --provider-key
+```
+
+安装器会隐藏输入内容，并自动切换到第三方认证。如果 key 已经保存在环境变量中，可以直接复用：
+
+```bash
+./install.sh \
+  --upstream-base https://api.example.com/v1 \
+  --api-key-env EXAMPLE_PROVIDER_KEY
+```
 
 安装脚本会创建独立运行目录、写入本地 `.env`、安装 `codex-router` 和 `codex-router-service` 命令，并启动 Router。`.env` 被 Git 忽略，不会随项目提交。
 
-如果还不准备配置上游，也可以先安装：
+只安装、不立即启动服务：
 
 ```bash
 ./install.sh --no-start
 ```
 
-之后重新执行带 `--upstream-base` 的安装命令即可写入或更新上游地址。
+之后重复运行安装脚本即可更新认证方式或上游地址，已有配置会保留。
 
 ### 3. 运行
 
@@ -89,7 +103,14 @@ codex-router exec "请总结 README"
 ```dotenv
 ROUTER_HOST=localhost
 ROUTER_PORT=8788
-ROUTER_UPSTREAM_BASE=https://api.example.com/v1
+
+# 默认自动选择：存在 ROUTER_API_KEY 时使用第三方认证，否则使用当前 Codex 登录。
+ROUTER_AUTH_MODE=auto
+ROUTER_API_KEY_ENV=ROUTER_API_KEY
+ROUTER_API_KEY=
+
+# Plus 模式可以留空；第三方认证必须填写。
+ROUTER_UPSTREAM_BASE=
 
 # 如果服务商使用不同的模型标识，可在这里覆盖。
 # ROUTER_LUNA_MODEL=your-luna-model
@@ -100,13 +121,28 @@ ROUTER_UPSTREAM_BASE=https://api.example.com/v1
 ROUTER_RESPONSE_FOOTER=1
 ```
 
-上游服务至少需要支持：
+自动选择顺序：
+
+1. `ROUTER_AUTH_MODE=auto` 且 `ROUTER_API_KEY_ENV` 指向的变量有值：使用第三方 key。
+2. 没有第三方 key：读取 `codex login status`。
+3. ChatGPT/Plus 登录使用 ChatGPT Codex 上游；OpenAI API key 登录使用 OpenAI API 上游。
+4. 用户可以用 `ROUTER_AUTH_MODE=openai` 或 `provider_key` 明确指定。
+
+查看当前选择，不启动会话：
+
+```bash
+codex-router --router-auth-status
+```
+
+输出不会包含 key 内容。
+
+第三方上游至少需要支持：
 
 - `POST /v1/responses`；
 - 流式 Responses 响应（如果你会使用流式 Codex 请求）；
 - 你配置的三个模型标识。
 
-如果没有配置 `ROUTER_UPSTREAM_BASE`，Router 的本地决策接口仍能使用，但实际转发会返回明确的配置提示，不会自动选择任何服务商。
+如果没有配置 `ROUTER_UPSTREAM_BASE`，Router 会根据 Codex 登录类型自动使用 ChatGPT Codex 或 OpenAI API 上游。第三方 key 模式缺少上游地址时会在启动前返回明确提示。
 
 ## 路由规则
 
@@ -184,6 +220,7 @@ codex-router-service start
 codex-router-service status
 codex-router-service logs
 codex-router-service restart
+codex-router-service ensure
 codex-router-service stop
 ```
 

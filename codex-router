@@ -17,6 +17,12 @@ fi
 
 PORT="${ROUTER_PORT:-8788}"
 MODEL_CATALOG="$SCRIPT_DIR/models/router-models.json"
+NODE_COMMAND="${NODE_BIN:-node}"
+
+command -v "$NODE_COMMAND" >/dev/null 2>&1 || {
+  echo "Node.js was not found. Set NODE_BIN or install Node.js 20+." >&2
+  exit 1
+}
 
 if [[ -n "${CODEX_BIN:-}" ]]; then
   CODEX_COMMAND="$CODEX_BIN"
@@ -29,16 +35,69 @@ else
   exit 1
 fi
 
-if ! "$SCRIPT_DIR/router-service.sh" status >/dev/null 2>&1; then
-  "$SCRIPT_DIR/router-service.sh" start
+export CODEX_BIN="$CODEX_COMMAND"
+
+if [[ "${1:-}" == "--router-auth-status" ]]; then
+  exec "$NODE_COMMAND" "$SCRIPT_DIR/auth-config-cli.mjs" --json
 fi
+
+load_auth_config() {
+  local auth_output key value
+  auth_output="$("$NODE_COMMAND" "$SCRIPT_DIR/auth-config-cli.mjs" --shell)"
+  selected_auth_mode=""
+  codex_login_mode=""
+  provider_key_env=""
+  resolved_upstream_base=""
+  while IFS='=' read -r key value; do
+    case "$key" in
+      selected_mode) selected_auth_mode="$value" ;;
+      codex_login_mode) codex_login_mode="$value" ;;
+      provider_key_env) provider_key_env="$value" ;;
+      upstream_base) resolved_upstream_base="$value" ;;
+    esac
+  done <<<"$auth_output"
+}
+
+load_auth_config
+if [[ "$selected_auth_mode" == "openai" && "$codex_login_mode" == "unknown" ]]; then
+  echo "No active Codex login was detected. Starting Codex sign-in..." >&2
+  "$CODEX_COMMAND" login
+  load_auth_config
+fi
+
+if [[ -z "$selected_auth_mode" || -z "$resolved_upstream_base" ]]; then
+  echo "Router authentication configuration could not be resolved." >&2
+  exit 1
+fi
+
+if [[ "$selected_auth_mode" == "openai" && "$codex_login_mode" == "unknown" ]]; then
+  echo "Codex login was not completed." >&2
+  exit 1
+fi
+
+"$SCRIPT_DIR/router-service.sh" ensure >/dev/null
+
+auth_config_args=()
+if [[ "$selected_auth_mode" == "provider_key" ]]; then
+  auth_config_args+=(
+    -c 'model_providers.gpt_5_6_router.requires_openai_auth=false'
+    -c "model_providers.gpt_5_6_router.env_key=\"$provider_key_env\""
+  )
+  echo "Router authentication: provider key from $provider_key_env" >&2
+else
+  auth_config_args+=(
+    -c 'model_providers.gpt_5_6_router.requires_openai_auth=true'
+  )
+  echo "Router authentication: current Codex login ($codex_login_mode)" >&2
+fi
+echo "Router upstream: $resolved_upstream_base" >&2
 
 exec "$CODEX_COMMAND" \
   -c 'model_provider="gpt_5_6_router"' \
   -c 'model_providers.gpt_5_6_router.name="GPT5.6-Router"' \
   -c 'model_providers.gpt_5_6_router.base_url="http://localhost:'"$PORT"'/v1"' \
   -c 'model_providers.gpt_5_6_router.wire_api="responses"' \
-  -c 'model_providers.gpt_5_6_router.requires_openai_auth=true' \
+  "${auth_config_args[@]}" \
   -c 'model_reasoning_effort="low"' \
   -c 'developer_instructions="Model routing is handled exclusively by the local HTTP Router service. Do not perform another model-selection step. Complete the task directly."' \
   -c "model_catalog_json=\"$MODEL_CATALOG\"" \

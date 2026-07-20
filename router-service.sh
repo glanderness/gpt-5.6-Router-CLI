@@ -22,10 +22,40 @@ ERROR_LOG_FILE="$RUNTIME_DIR/router-error.log"
 PID_FILE="$RUNTIME_DIR/router.pid"
 NODE_BIN="${NODE_BIN:-node}"
 
+resolved_auth_json() {
+  "$NODE_BIN" "$SCRIPT_DIR/auth-config-cli.mjs" --json
+}
+
+prepare_auth_environment() {
+  local resolved
+  resolved="$(resolved_auth_json)"
+  ROUTER_CODEX_LOGIN_MODE="$("$NODE_BIN" -e 'console.log(JSON.parse(process.argv[1]).codexLoginMode)' "$resolved")"
+  export ROUTER_CODEX_LOGIN_MODE
+}
+
 is_ready() {
   local health
   health="$(curl -fsS --max-time 2 "http://localhost:$PORT/health" 2>/dev/null || true)"
   [[ "$health" == *'"service":"gpt5.6-router"'* ]]
+}
+
+configuration_matches() {
+  local health expected
+  health="$(curl -fsS --max-time 2 "http://localhost:$PORT/health" 2>/dev/null || true)"
+  [[ -n "$health" ]] || return 1
+  expected="$(resolved_auth_json)" || return 1
+  "$NODE_BIN" -e '
+    const [healthJson, expectedJson] = process.argv.slice(1);
+    const health = JSON.parse(healthJson);
+    const expected = JSON.parse(expectedJson);
+    process.exit(
+      health.service === "gpt5.6-router"
+      && health.authMode === expected.selectedMode
+      && health.upstreamBase === expected.upstreamBase
+        ? 0
+        : 1
+    );
+  ' "$health" "$expected"
 }
 
 read_pid() {
@@ -38,15 +68,18 @@ read_pid() {
 
 case "${1:-status}" in
   start)
-    if is_ready; then
-      echo "Router service is already running at http://localhost:$PORT"
-      exit 0
-    fi
-
     command -v "$NODE_BIN" >/dev/null 2>&1 || {
       echo "Node.js was not found. Set NODE_BIN or install Node.js 20+." >&2
       exit 1
     }
+    prepare_auth_environment
+
+    if configuration_matches; then
+      echo "Router service is already running at http://localhost:$PORT"
+      exit 0
+    fi
+
+    if is_ready; then "$0" stop >/dev/null; fi
 
     mkdir -p "$RUNTIME_DIR"
     nohup "$NODE_BIN" "$SCRIPT_DIR/server.mjs" >>"$LOG_FILE" 2>>"$ERROR_LOG_FILE" &
@@ -78,6 +111,18 @@ case "${1:-status}" in
     "$0" stop
     "$0" start
     ;;
+  ensure)
+    command -v "$NODE_BIN" >/dev/null 2>&1 || {
+      echo "Node.js was not found. Set NODE_BIN or install Node.js 20+." >&2
+      exit 1
+    }
+    resolved_auth_json >/dev/null
+    if configuration_matches; then
+      echo "Router service configuration is current."
+    else
+      "$0" restart
+    fi
+    ;;
   status)
     if is_ready; then
       curl -fsS "http://localhost:$PORT/health"
@@ -92,7 +137,7 @@ case "${1:-status}" in
     tail -n 100 "$ERROR_LOG_FILE" 2>/dev/null || true
     ;;
   *)
-    echo "Usage: $0 {start|stop|restart|status|logs}" >&2
+    echo "Usage: $0 {start|stop|restart|ensure|status|logs}" >&2
     exit 2
     ;;
 esac

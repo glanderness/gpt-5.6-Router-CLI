@@ -6,14 +6,21 @@ APP_DIR="${GPT56_ROUTER_INSTALL_DIR:-${GPT_ROUTER_INSTALL_DIR:-$HOME/.local/shar
 BIN_DIR="${GPT_ROUTER_BIN_DIR:-$HOME/.local/bin}"
 START_SERVICE=1
 UPSTREAM_BASE="${ROUTER_UPSTREAM_BASE:-}"
+AUTH_MODE_OPTION="${ROUTER_AUTH_MODE:-}"
+API_KEY_ENV_OPTION="${ROUTER_API_KEY_ENV:-}"
+PROVIDER_KEY_VALUE="${ROUTER_API_KEY:-}"
+PROMPT_PROVIDER_KEY=0
 LEGACY_RUNTIME_DIR="$HOME/.local/share/gpt-5.6-router-cli"
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [--upstream-base URL] [--no-start]
+Usage: ./install.sh [--upstream-base URL] [--auth-mode MODE] [--provider-key] [--api-key-env NAME] [--no-start]
 
 Options:
   --upstream-base URL  Set the Responses API base URL for the selected provider.
+  --auth-mode MODE  Set auto, openai, or provider_key authentication.
+  --provider-key  Prompt securely for a third-party provider key.
+  --api-key-env NAME  Read a provider key from the named environment variable.
   --no-start  Install commands and configuration without starting the Router service.
   -h, --help  Show this help text.
 EOF
@@ -27,6 +34,25 @@ while [[ $# -gt 0 ]]; do
         exit 2
       }
       UPSTREAM_BASE="$2"
+      shift
+      ;;
+    --auth-mode)
+      [[ $# -ge 2 ]] || {
+        echo "--auth-mode requires auto, openai, or provider_key." >&2
+        exit 2
+      }
+      AUTH_MODE_OPTION="$2"
+      shift
+      ;;
+    --provider-key)
+      PROMPT_PROVIDER_KEY=1
+      ;;
+    --api-key-env)
+      [[ $# -ge 2 ]] || {
+        echo "--api-key-env requires an environment variable name." >&2
+        exit 2
+      }
+      API_KEY_ENV_OPTION="$2"
       shift
       ;;
     --no-start)
@@ -94,11 +120,33 @@ if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   install -m 644 "$SOURCE_DIR/router.mjs" "$APP_DIR/router.mjs"
   install -m 644 "$SOURCE_DIR/router-signals.mjs" "$APP_DIR/router-signals.mjs"
   install -m 644 "$SOURCE_DIR/router-policy.mjs" "$APP_DIR/router-policy.mjs"
+  install -m 644 "$SOURCE_DIR/auth-config.mjs" "$APP_DIR/auth-config.mjs"
+  install -m 644 "$SOURCE_DIR/auth-config-cli.mjs" "$APP_DIR/auth-config-cli.mjs"
   install -m 644 "$SOURCE_DIR/.env.example" "$APP_DIR/.env.example"
   install -m 644 "$SOURCE_DIR/models/router-models.json" "$APP_DIR/models/router-models.json"
   install -m 755 "$SOURCE_DIR/codex-router" "$APP_DIR/codex-router"
   install -m 755 "$SOURCE_DIR/router-service.sh" "$APP_DIR/router-service.sh"
 fi
+
+set_env_value() {
+  local key="$1" value="$2" encoded
+  [[ "$key" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    echo "Invalid environment variable name: $key" >&2
+    exit 1
+  }
+  printf -v encoded '%q' "$value"
+  node -e '
+    const fs = require("node:fs");
+    const [file, key, encoded] = process.argv.slice(1);
+    const line = `${key}=${encoded}`;
+    const source = fs.readFileSync(file, "utf8");
+    const pattern = new RegExp(`^${key}=.*$`, "m");
+    const next = pattern.test(source)
+      ? source.replace(pattern, line)
+      : `${source.trimEnd()}\n${line}\n`;
+    fs.writeFileSync(file, next, { mode: 0o600 });
+  ' "$APP_DIR/.env" "$key" "$encoded"
+}
 
 if [[ ! -f "$APP_DIR/.env" ]]; then
   if [[ -f "$SOURCE_DIR/.env" && "$SOURCE_DIR" != "$APP_DIR" ]]; then
@@ -109,25 +157,45 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
 fi
 
 if [[ -n "$UPSTREAM_BASE" ]]; then
-  node -e '
-    const fs = require("node:fs");
-    const [file, raw] = process.argv.slice(1);
-    let url;
-    try {
-      url = new URL(raw);
-      if (!["http:", "https:"].includes(url.protocol)) throw new Error("unsupported protocol");
-    } catch {
-      console.error("ROUTER_UPSTREAM_BASE must be a valid http or https URL.");
-      process.exit(1);
-    }
-    const value = raw.replace(/\/$/, "");
-    const line = `ROUTER_UPSTREAM_BASE=${value}`;
-    const source = fs.readFileSync(file, "utf8");
-    const next = /^ROUTER_UPSTREAM_BASE=.*$/m.test(source)
-      ? source.replace(/^ROUTER_UPSTREAM_BASE=.*$/m, line)
-      : `${source.trimEnd()}\n${line}\n`;
-    fs.writeFileSync(file, next, { mode: 0o600 });
-  ' "$APP_DIR/.env" "$UPSTREAM_BASE"
+  set_env_value ROUTER_UPSTREAM_BASE "${UPSTREAM_BASE%/}"
+fi
+
+if [[ -n "$AUTH_MODE_OPTION" ]]; then
+  set_env_value ROUTER_AUTH_MODE "$AUTH_MODE_OPTION"
+fi
+
+if [[ -n "$API_KEY_ENV_OPTION" ]]; then
+  [[ "$API_KEY_ENV_OPTION" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]] || {
+    echo "--api-key-env must be a valid environment variable name." >&2
+    exit 1
+  }
+  set_env_value ROUTER_API_KEY_ENV "$API_KEY_ENV_OPTION"
+fi
+
+provider_key_env="${API_KEY_ENV_OPTION:-ROUTER_API_KEY}"
+if [[ -z "$PROVIDER_KEY_VALUE" && "$provider_key_env" != "ROUTER_API_KEY" ]]; then
+  PROVIDER_KEY_VALUE="${!provider_key_env:-}"
+fi
+
+if (( PROMPT_PROVIDER_KEY == 1 )); then
+  [[ -t 0 ]] || {
+    echo "--provider-key requires an interactive terminal." >&2
+    exit 1
+  }
+  read -r -s -p "Provider API key: " PROVIDER_KEY_VALUE
+  echo
+  [[ -n "$PROVIDER_KEY_VALUE" ]] || {
+    echo "Provider API key cannot be empty." >&2
+    exit 1
+  }
+  if [[ -z "$AUTH_MODE_OPTION" ]]; then
+    set_env_value ROUTER_AUTH_MODE provider_key
+  fi
+fi
+
+if [[ -n "$PROVIDER_KEY_VALUE" ]]; then
+  set_env_value ROUTER_API_KEY_ENV "$provider_key_env"
+  set_env_value "$provider_key_env" "$PROVIDER_KEY_VALUE"
 fi
 
 if [[ -n "${CODEX_BIN:-}" ]]; then
@@ -146,6 +214,9 @@ if [[ -n "${CODEX_BIN:-}" ]]; then
   fi
 fi
 
+chmod 600 "$APP_DIR/.env"
+auth_json="$("$APP_DIR/codex-router" --router-auth-status)"
+
 ln -sfn "$APP_DIR/codex-router" "$BIN_DIR/codex-router"
 ln -sfn "$APP_DIR/router-service.sh" "$BIN_DIR/codex-router-service"
 
@@ -158,21 +229,14 @@ echo "GPT5.6-Router is installed."
 echo "Codex CLI: $codex_path"
 echo "Application: $APP_DIR"
 echo "Configuration: $APP_DIR/.env"
-
-configured_upstream=""
-while IFS= read -r line; do
-  case "$line" in
-    ROUTER_UPSTREAM_BASE=*)
-      configured_upstream="${line#ROUTER_UPSTREAM_BASE=}"
-      ;;
-  esac
-done <"$APP_DIR/.env"
-
-if [[ -z "$configured_upstream" ]]; then
-  echo
-  echo "Next step: configure an upstream provider before sending requests:"
-  echo "  ./install.sh --upstream-base https://api.example.com/v1"
-fi
+node -e '
+  const config = JSON.parse(process.argv[1]);
+  const auth = config.selectedMode === "provider_key"
+    ? `provider key from ${config.providerKeyEnv}`
+    : "current Codex login (ChatGPT/Plus or OpenAI API key)";
+  console.log(`Authentication: ${auth}`);
+  console.log(`Upstream: ${config.upstreamBase}`);
+' "$auth_json"
 
 case ":$PATH:" in
   *":$BIN_DIR:"*)
