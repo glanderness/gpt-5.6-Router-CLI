@@ -3,9 +3,22 @@ import http from "node:http";
 import { Readable } from "node:stream";
 import { MODEL_AUTO, routeRequest } from "./router.mjs";
 
-const host = process.env.ROUTER_HOST || "127.0.0.1";
+const host = process.env.ROUTER_HOST || "localhost";
 const port = Number(process.env.ROUTER_PORT || 8788);
-const upstreamBase = (process.env.ROUTER_UPSTREAM_BASE || "https://beefapi.com/v1").replace(/\/$/, "");
+const configuredUpstreamBase = String(process.env.ROUTER_UPSTREAM_BASE || "").trim();
+let upstreamBase = null;
+let upstreamConfigurationError = null;
+if (!configuredUpstreamBase) {
+  upstreamConfigurationError = "ROUTER_UPSTREAM_BASE is not configured. Set it to your provider's Responses API base URL, for example https://api.example.com/v1.";
+} else {
+  try {
+    const parsedUpstream = new URL(configuredUpstreamBase);
+    if (!['http:', 'https:'].includes(parsedUpstream.protocol)) throw new Error("unsupported protocol");
+    upstreamBase = configuredUpstreamBase.replace(/\/$/, "");
+  } catch {
+    upstreamConfigurationError = "ROUTER_UPSTREAM_BASE must be a valid http or https URL.";
+  }
+}
 const logRequests = process.env.ROUTER_LOG_REQUESTS === "1";
 const logTaskPreview = process.env.ROUTER_LOG_TASK_PREVIEW === "1";
 
@@ -14,7 +27,7 @@ function log(event, fields = {}) {
 }
 
 function routerModelFrom(source = {}) {
-  return { ...source, id: MODEL_AUTO, slug: MODEL_AUTO, display_name: "GPT 5.6 Router", name: "GPT 5.6 Router", description: "Automatically selects Luna, Terra, or Sol based on task complexity.", object: source.object || "model", owned_by: source.owned_by || "local-router" };
+  return { ...source, id: MODEL_AUTO, slug: MODEL_AUTO, display_name: "GPT5.6-Router", name: "GPT5.6-Router", description: "GPT5.6-Router automatically selects Luna, Terra, or Sol based on task complexity.", object: source.object || "model", owned_by: source.owned_by || "local-router" };
 }
 
 function appendRouterModel(payload) {
@@ -145,11 +158,15 @@ const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || `${host}:${port}`}`);
     if (logRequests) log("request_received", { method: request.method, path: url.pathname });
     if (request.method === "GET" && url.pathname === "/health") {
-      return sendJson(response, 200, { ok: true, service: "gpt-5.6-router-cli", upstreamBase });
+      return sendJson(response, 200, { ok: true, service: "gpt5.6-router", upstreamConfigured: Boolean(upstreamBase) });
     }
     if (request.method === "POST" && url.pathname === "/router/decision") {
       const payload = JSON.parse((await readBody(request)).toString("utf8") || "{}");
       return sendJson(response, 200, routeRequest({ ...payload, model: MODEL_AUTO, input: payload.input || "" }).decision);
+    }
+
+    if (!upstreamBase) {
+      return sendJson(response, 503, { error: { type: "router_configuration_error", message: upstreamConfigurationError } });
     }
 
     const raw = await readBody(request);
@@ -222,4 +239,4 @@ const server = http.createServer(async (request, response) => {
   }
 });
 
-server.listen(port, host, () => log("server_started", { host, port, upstream_base: upstreamBase }));
+server.listen(port, host, () => log("server_started", { host, port, upstream_configured: Boolean(upstreamBase) }));

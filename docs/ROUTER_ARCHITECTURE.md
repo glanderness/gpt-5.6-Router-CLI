@@ -1,8 +1,8 @@
-# GPT-5.6 Router Architecture
+# GPT5.6-Router Architecture
 
 ## 目标
 
-这个 Router 面向 Codex CLI，提供一个虚拟模型 `gpt-5.6-router`。客户端只选择一次 Router，服务在本地完成任务分类、模型策略和请求改写，再把请求发送到 BeefAPI。
+GPT5.6-Router 面向 Codex CLI，提供一个虚拟模型 `gpt-5.6-router`。客户端只选择一次 Router，服务在本地完成任务分类、模型策略和请求改写，再把请求发送到用户配置的、兼容 OpenAI Responses API 的上游服务。
 
 设计目标：
 
@@ -69,7 +69,7 @@ Request Rewrite
   │ reasoning.effort
   │ 最终回答显示行
   ▼
-BeefAPI
+Configured Responses API Provider
   ▼
 Response + Observability
   │ 上游实际模型

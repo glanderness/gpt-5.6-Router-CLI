@@ -16,7 +16,7 @@ if [[ -f "$SCRIPT_DIR/.env" ]]; then
 fi
 
 PORT="${ROUTER_PORT:-8788}"
-RUNTIME_DIR="${ROUTER_RUNTIME_DIR:-$HOME/.local/share/gpt-5.6-router-cli}"
+RUNTIME_DIR="${ROUTER_RUNTIME_DIR:-$HOME/.local/share/gpt5.6-router}"
 LOG_FILE="$RUNTIME_DIR/router.log"
 ERROR_LOG_FILE="$RUNTIME_DIR/router-error.log"
 PID_FILE="$RUNTIME_DIR/router.pid"
@@ -24,8 +24,8 @@ NODE_BIN="${NODE_BIN:-node}"
 
 is_ready() {
   local health
-  health="$(curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null || true)"
-  [[ "$health" == *'"service":"gpt-5.6-router-cli"'* ]]
+  health="$(curl -fsS --max-time 2 "http://localhost:$PORT/health" 2>/dev/null || true)"
+  [[ "$health" == *'"service":"gpt5.6-router"'* ]]
 }
 
 read_pid() {
@@ -39,7 +39,7 @@ read_pid() {
 case "${1:-status}" in
   start)
     if is_ready; then
-      echo "Router service is already running at http://127.0.0.1:$PORT"
+      echo "Router service is already running at http://localhost:$PORT"
       exit 0
     fi
 
@@ -54,7 +54,7 @@ case "${1:-status}" in
 
     for _ in {1..50}; do
       if is_ready; then
-        echo "Router service started at http://127.0.0.1:$PORT"
+        echo "Router service started at http://localhost:$PORT"
         exit 0
       fi
       sleep 0.1
@@ -80,7 +80,7 @@ case "${1:-status}" in
     ;;
   status)
     if is_ready; then
-      curl -fsS "http://127.0.0.1:$PORT/health"
+      curl -fsS "http://localhost:$PORT/health"
       echo
     else
       echo "Router service is not running."

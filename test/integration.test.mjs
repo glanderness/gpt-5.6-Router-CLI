@@ -9,14 +9,14 @@ import path from "node:path";
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 async function listen(server) {
-  server.listen(0, "127.0.0.1");
+  server.listen(0, "localhost");
   await once(server, "listening");
   return server.address().port;
 }
 
 async function waitForHealth(port) {
   for (let attempt = 0; attempt < 40; attempt += 1) {
-    try { if ((await fetch(`http://127.0.0.1:${port}/health`)).ok) return; } catch { /* starting */ }
+    try { if ((await fetch(`http://localhost:${port}/health`)).ok) return; } catch { /* starting */ }
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
   throw new Error("Router test server did not become ready");
@@ -66,14 +66,14 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   const reserved = http.createServer();
   const routerPort = await listen(reserved);
   await new Promise((resolve) => reserved.close(resolve));
-  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], { cwd: projectDir, env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_UPSTREAM_BASE: `http://127.0.0.1:${upstreamPort}/v1` }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], { cwd: projectDir, env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_UPSTREAM_BASE: `http://localhost:${upstreamPort}/v1` }, stdio: ["ignore", "pipe", "pipe"] });
   const logs = [];
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => chunk.trim().split("\n").filter(Boolean).forEach((line) => { try { logs.push(JSON.parse(line)); } catch { /* startup diagnostics */ } }));
   t.after(async () => { child.kill("SIGTERM"); await new Promise((resolve) => upstream.close(resolve)); });
   await waitForHealth(routerPort);
 
-  const decisionResponse = await fetch(`http://127.0.0.1:${routerPort}/router/decision`, {
+  const decisionResponse = await fetch(`http://localhost:${routerPort}/router/decision`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
@@ -93,7 +93,7 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.deepEqual(localDecision.features.modalities, ["image", "text"]);
   assert.equal(localDecision.requiredCapabilities.tools, true);
 
-  const simple = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "client-1" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "帮我润色标题" }) });
+  const simple = await fetch(`http://localhost:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "client-1" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "帮我润色标题" }) });
   assert.equal((await simple.json()).model, "gpt-5.6-luna");
   const jsonLog = await waitForLog(logs, (entry) => entry.event === "response_completed" && entry.upstream_response_id === "resp-json");
   assert.equal(jsonLog.requested_model, "gpt-5.6-router");
@@ -113,16 +113,16 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.deepEqual(decisionLog.routing_candidate_models, ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
   assert.deepEqual(decisionLog.routing_excluded_candidates, []);
 
-  const passthrough = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-terra", input: "普通任务", reasoning: { effort: "high" } }) });
+  const passthrough = await fetch(`http://localhost:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-terra", input: "普通任务", reasoning: { effort: "high" } }) });
   assert.equal((await passthrough.json()).model, "gpt-5.6-terra");
 
-  const unknown = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "no model" }) });
+  const unknown = await fetch(`http://localhost:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "no model" }) });
   assert.equal((await unknown.json()).id, "resp-unknown");
   const unknownLog = await waitForLog(logs, (entry) => entry.event === "response_completed" && entry.upstream_response_id === "resp-unknown");
   assert.equal(unknownLog.upstream_reported_model, null);
   assert.deepEqual(unknownLog.usage, { input_tokens: 2, output_tokens: 1, total_tokens: 3 });
 
-  const stream = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "请做一份 BTC 未来走势预测和投资分析研究报告", stream: true }) });
+  const stream = await fetch(`http://localhost:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "请做一份 BTC 未来走势预测和投资分析研究报告", stream: true }) });
   const streamText = await stream.text();
   assert.match(streamText, /gpt-5\.6-sol/);
   assert.match(streamText, /\[DONE\]/);
@@ -143,4 +143,38 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.match(receivedRequests[2].instructions, /Router 实际选择：gpt-5\.6-terra｜推理强度：medium/);
   assert.equal(receivedRequests[3].reasoning.effort, "high");
   assert.match(receivedRequests[3].instructions, /Router 实际选择：gpt-5\.6-sol｜推理强度：high/);
+});
+
+test("router keeps local decisions available until an upstream provider is configured", async (t) => {
+  const reserved = http.createServer();
+  const routerPort = await listen(reserved);
+  await new Promise((resolve) => reserved.close(resolve));
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], {
+    cwd: projectDir,
+    env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_UPSTREAM_BASE: "" },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => child.kill("SIGTERM"));
+  await waitForHealth(routerPort);
+
+  const health = await (await fetch(`http://localhost:${routerPort}/health`)).json();
+  assert.equal(health.upstreamConfigured, false);
+
+  const decision = await fetch(`http://localhost:${routerPort}/router/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: "请只回复 OK" }),
+  });
+  assert.equal(decision.status, 200);
+  assert.equal((await decision.json()).selectedModel, "gpt-5.6-luna");
+
+  const response = await fetch(`http://localhost:${routerPort}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-5.6-router", input: "请只回复 OK" }),
+  });
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.error.type, "router_configuration_error");
+  assert.match(payload.error.message, /ROUTER_UPSTREAM_BASE is not configured/);
 });

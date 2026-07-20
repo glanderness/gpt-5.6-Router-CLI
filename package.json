@@ -1,8 +1,8 @@
 {
-  "name": "gpt-5.6-router-cli",
+  "name": "gpt5.6-router",
   "version": "0.2.0",
   "private": true,
-  "description": "A local Codex CLI router for GPT-5.6 Luna, Terra, and Sol.",
+  "description": "GPT5.6-Router: a local Codex CLI router for Luna, Terra, and Sol.",
   "type": "module",
   "scripts": {
     "setup": "./install.sh",

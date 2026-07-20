@@ -2,15 +2,18 @@
 set -euo pipefail
 
 SOURCE_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-APP_DIR="${GPT_ROUTER_INSTALL_DIR:-$HOME/.local/share/gpt-5.6-router-cli/app}"
+APP_DIR="${GPT56_ROUTER_INSTALL_DIR:-${GPT_ROUTER_INSTALL_DIR:-$HOME/.local/share/gpt5.6-router/app}}"
 BIN_DIR="${GPT_ROUTER_BIN_DIR:-$HOME/.local/bin}"
 START_SERVICE=1
+UPSTREAM_BASE="${ROUTER_UPSTREAM_BASE:-}"
+LEGACY_RUNTIME_DIR="$HOME/.local/share/gpt-5.6-router-cli"
 
 usage() {
   cat <<'EOF'
-Usage: ./install.sh [--no-start]
+Usage: ./install.sh [--upstream-base URL] [--no-start]
 
 Options:
+  --upstream-base URL  Set the Responses API base URL for the selected provider.
   --no-start  Install commands and configuration without starting the Router service.
   -h, --help  Show this help text.
 EOF
@@ -18,6 +21,14 @@ EOF
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
+    --upstream-base)
+      [[ $# -ge 2 ]] || {
+        echo "--upstream-base requires a URL." >&2
+        exit 2
+      }
+      UPSTREAM_BASE="$2"
+      shift
+      ;;
     --no-start)
       START_SERVICE=0
       ;;
@@ -66,6 +77,18 @@ mkdir -p "$APP_DIR/models" "$BIN_DIR"
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 BIN_DIR="$(cd "$BIN_DIR" && pwd)"
 
+if [[ "$APP_DIR" != "$LEGACY_RUNTIME_DIR/app" && -f "$LEGACY_RUNTIME_DIR/router.pid" ]]; then
+  legacy_pid="$(<"$LEGACY_RUNTIME_DIR/router.pid")"
+  if [[ "$legacy_pid" =~ ^[0-9]+$ ]] && kill -0 "$legacy_pid" 2>/dev/null; then
+    legacy_command="$(ps -p "$legacy_pid" -o command= 2>/dev/null || true)"
+    if [[ "$legacy_command" == *"server.mjs"* ]]; then
+      kill "$legacy_pid"
+      echo "Stopped the previous Router service during migration."
+    fi
+  fi
+  rm -f "$LEGACY_RUNTIME_DIR/router.pid"
+fi
+
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   install -m 644 "$SOURCE_DIR/server.mjs" "$APP_DIR/server.mjs"
   install -m 644 "$SOURCE_DIR/router.mjs" "$APP_DIR/router.mjs"
@@ -83,6 +106,28 @@ if [[ ! -f "$APP_DIR/.env" ]]; then
   else
     install -m 600 "$SOURCE_DIR/.env.example" "$APP_DIR/.env"
   fi
+fi
+
+if [[ -n "$UPSTREAM_BASE" ]]; then
+  node -e '
+    const fs = require("node:fs");
+    const [file, raw] = process.argv.slice(1);
+    let url;
+    try {
+      url = new URL(raw);
+      if (!["http:", "https:"].includes(url.protocol)) throw new Error("unsupported protocol");
+    } catch {
+      console.error("ROUTER_UPSTREAM_BASE must be a valid http or https URL.");
+      process.exit(1);
+    }
+    const value = raw.replace(/\/$/, "");
+    const line = `ROUTER_UPSTREAM_BASE=${value}`;
+    const source = fs.readFileSync(file, "utf8");
+    const next = /^ROUTER_UPSTREAM_BASE=.*$/m.test(source)
+      ? source.replace(/^ROUTER_UPSTREAM_BASE=.*$/m, line)
+      : `${source.trimEnd()}\n${line}\n`;
+    fs.writeFileSync(file, next, { mode: 0o600 });
+  ' "$APP_DIR/.env" "$UPSTREAM_BASE"
 fi
 
 if [[ -n "${CODEX_BIN:-}" ]]; then
@@ -109,10 +154,25 @@ if (( START_SERVICE == 1 )); then
 fi
 
 echo
-echo "GPT-5.6 Router CLI is installed."
+echo "GPT5.6-Router is installed."
 echo "Codex CLI: $codex_path"
 echo "Application: $APP_DIR"
 echo "Configuration: $APP_DIR/.env"
+
+configured_upstream=""
+while IFS= read -r line; do
+  case "$line" in
+    ROUTER_UPSTREAM_BASE=*)
+      configured_upstream="${line#ROUTER_UPSTREAM_BASE=}"
+      ;;
+  esac
+done <"$APP_DIR/.env"
+
+if [[ -z "$configured_upstream" ]]; then
+  echo
+  echo "Next step: configure an upstream provider before sending requests:"
+  echo "  ./install.sh --upstream-base https://api.example.com/v1"
+fi
 
 case ":$PATH:" in
   *":$BIN_DIR:"*)
