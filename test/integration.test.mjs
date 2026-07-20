@@ -73,6 +73,26 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   t.after(async () => { child.kill("SIGTERM"); await new Promise((resolve) => upstream.close(resolve)); });
   await waitForHealth(routerPort);
 
+  const decisionResponse = await fetch(`http://127.0.0.1:${routerPort}/router/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: "读取文件并总结" },
+          { type: "input_image", image_url: "data:image/png;base64,AA==" },
+        ],
+      }],
+      tools: [{ type: "function", name: "read_file" }],
+    }),
+  });
+  const localDecision = await decisionResponse.json();
+  assert.equal(localDecision.mode, "terra");
+  assert.equal(localDecision.confidence >= 0.65, true);
+  assert.deepEqual(localDecision.features.modalities, ["image", "text"]);
+  assert.equal(localDecision.requiredCapabilities.tools, true);
+
   const simple = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "client-1" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "帮我润色标题" }) });
   assert.equal((await simple.json()).model, "gpt-5.6-luna");
   const jsonLog = await waitForLog(logs, (entry) => entry.event === "response_completed" && entry.upstream_response_id === "resp-json");
@@ -84,6 +104,14 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.equal(jsonLog.upstream_reported_reasoning_effort, "low");
   assert.deepEqual(jsonLog.usage, { input_tokens: 5, output_tokens: 3, total_tokens: 8 });
   assert.equal(jsonLog.client_request_id, "client-1");
+  assert.equal(jsonLog.routing_classified_mode, "luna");
+  assert.equal(typeof jsonLog.routing_confidence, "number");
+  assert.equal(jsonLog.routing_version, "signals-v2");
+  const decisionLog = await waitForLog(logs, (entry) => entry.event === "routing_decision" && entry.client_request_id === "client-1");
+  assert.equal(Array.isArray(decisionLog.routing_signal_details), true);
+  assert.equal(decisionLog.routing_signal_details.length, 11);
+  assert.deepEqual(decisionLog.routing_candidate_models, ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  assert.deepEqual(decisionLog.routing_excluded_candidates, []);
 
   const passthrough = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-terra", input: "普通任务", reasoning: { effort: "high" } }) });
   assert.equal((await passthrough.json()).model, "gpt-5.6-terra");

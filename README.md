@@ -18,6 +18,61 @@
 - `[均衡]`、`[terra]`、`/terra`
 - `[最强]`、`[sol]`、`/sol`
 
+## 决策架构
+
+Router 内部已经拆成两个独立层：
+
+完整技术说明见 [Router Architecture](docs/ROUTER_ARCHITECTURE.md)。
+
+```text
+请求
+  → 请求特征：最后一条任务、工具、上下文长度、输入类型
+  → 11 个独立复杂度信号
+  → 加权分数、档位下限和置信度
+  → Luna / Terra / Sol 分类档位
+  → 模型策略与能力过滤
+  → 实际模型和推理强度
+```
+
+分类层只判断任务档位，不包含模型名称。策略层负责：
+
+- Luna → `gpt-5.6-luna` → `low`
+- Terra → `gpt-5.6-terra` → `medium`
+- Sol → `gpt-5.6-sol` → `high`
+- 根据工具、上下文长度和输入类型过滤不满足要求的候选模型。
+
+### 独立信号
+
+| 信号 | 权重 | 主要判断内容 |
+|---|---:|---|
+| `simpleTask` | 0.18 | 问候、翻译、润色、总结、短回复；负向复杂度 |
+| `reasoning` | 0.18 | 深度分析、研究、预测、根因和推导 |
+| `codePresence` | 0.12 | 代码、函数、接口、数据库、测试等 |
+| `multiStep` | 0.11 | 多步骤、分阶段、连续执行 |
+| `technicalDepth` | 0.10 | 架构、部署、性能、协议、算法等 |
+| `scope` | 0.10 | 单文件与多文件、局部修改与完整系统 |
+| `constraints` | 0.06 | 兼容性、格式、验证和验收条件 |
+| `imperative` | 0.04 | 实现、构建、修改、读取、执行等指令 |
+| `contextLength` | 0.05 | 当前任务上下文规模 |
+| `toolRequirement` | 0.04 | 是否明确需要文件、命令或其他工具 |
+| `inputModality` | 0.02 | 图片、文件、音频等非文本输入 |
+
+默认基础分为 `0.38`，各信号值位于 `[-1, 1]`，最终档位边界为：
+
+```text
+Luna  < 0.30
+Terra 0.30–0.65
+Sol   ≥ 0.65
+```
+
+深度研究、根因分析、多文件或完整系统任务设置 Sol 下限；明确需要工具或非文本输入时设置 Terra 下限。人工指定仍然最高优先。
+
+### 置信度
+
+置信度根据最终分数到最近档位边界的距离计算。距离边界越近，置信度越低；低于 `0.65` 的自动判断统一使用 Terra。
+
+因此，Router 不会因为一个接近边界的分数，轻易把任务交给 Luna 或 Sol。
+
 ## 工作方式
 
 ```text
@@ -155,8 +210,11 @@ curl -sS http://127.0.0.1:8788/router/decision \
 ```json
 {
   "mode": "sol",
+  "classifiedMode": "sol",
+  "confidence": 0.9,
   "selectedModel": "gpt-5.6-sol",
-  "reasoningEffort": "high"
+  "reasoningEffort": "high",
+  "classificationVersion": "signals-v2"
 }
 ```
 
@@ -177,6 +235,12 @@ curl -sS http://127.0.0.1:8788/router/decision \
 - `upstream_reported_reasoning_effort`：上游响应明确报告的推理强度。
 - `usage`：上游返回的 token 用量。
 - `routing_score`、`routing_reason`：可解释的分类结果。
+- `routing_confidence`：当前判断的置信度。
+- `routing_classified_mode`：能力过滤前的分类档位。
+- `routing_ambiguity_fallback`：是否因为接近边界而使用 Terra。
+- `routing_signal_details`：每个信号的值、权重、贡献分和命中依据。
+- `routing_features`：安全的请求特征摘要，例如 token 估算、工具数量和输入类型。
+- `routing_required_capabilities`、`routing_candidate_models`、`routing_excluded_candidates`：模型策略与能力过滤结果。
 
 默认不记录任务正文摘要。如果确实需要调试分类，可以在 `.env` 中设置：
 

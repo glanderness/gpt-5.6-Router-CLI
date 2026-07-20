@@ -40,4 +40,15 @@ test("installer creates an isolated app and global command links", async (t) => 
   assert.match(installedEnvironment, new RegExp(`CODEX_BIN=${fakeCodex.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`));
   await access(path.join(appDir, "codex-router"), constants.X_OK);
   await access(path.join(appDir, "router-service.sh"), constants.X_OK);
+  await access(path.join(appDir, "router-signals.mjs"), constants.R_OK);
+  await access(path.join(appDir, "router-policy.mjs"), constants.R_OK);
+
+  await writeFile(path.join(appDir, ".env"), `${installedEnvironment}\nROUTER_PORT=65530\n`, "utf8");
+  const serviceStatus = spawnSync(path.join(binDir, "codex-router-service"), ["status"], {
+    encoding: "utf8",
+    env: { ...process.env, HOME: temporaryHome },
+  });
+  assert.equal(serviceStatus.status, 1);
+  assert.match(serviceStatus.stdout, /Router service is not running\./);
+  assert.doesNotMatch(serviceStatus.stderr, /No such file or directory/);
 });

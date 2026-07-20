@@ -149,7 +149,7 @@ const server = http.createServer(async (request, response) => {
     }
     if (request.method === "POST" && url.pathname === "/router/decision") {
       const payload = JSON.parse((await readBody(request)).toString("utf8") || "{}");
-      return sendJson(response, 200, routeRequest({ model: MODEL_AUTO, input: payload.input || "" }).decision);
+      return sendJson(response, 200, routeRequest({ ...payload, model: MODEL_AUTO, input: payload.input || "" }).decision);
     }
 
     const raw = await readBody(request);
@@ -171,7 +171,12 @@ const server = http.createServer(async (request, response) => {
         requested_reasoning_effort: requestedReasoningEffort,
         selected_reasoning_effort: routed.decision?.reasoningEffort || requestedReasoningEffort,
         routing_mode: routed.decision?.mode || "passthrough",
+        routing_classified_mode: routed.decision?.classifiedMode || null,
         routing_score: routed.decision?.score ?? null,
+        routing_confidence: routed.decision?.confidence ?? null,
+        routing_ambiguity_fallback: routed.decision?.ambiguityFallback ?? false,
+        routing_capability_fallback: routed.decision?.capabilityFallback ?? false,
+        routing_version: routed.decision?.classificationVersion || null,
       };
       log("request_started", record);
       if (routed.decision) {
@@ -179,6 +184,13 @@ const server = http.createServer(async (request, response) => {
           ...record,
           routing_reason: routed.decision.reason,
           routing_signals: routed.decision.signals,
+          routing_signal_details: routed.decision.signalDetails,
+          routing_features: routed.decision.features,
+          routing_minimum_mode: routed.decision.minimumMode,
+          routing_policy_reason: routed.decision.policyReason,
+          routing_required_capabilities: routed.decision.requiredCapabilities,
+          routing_candidate_models: routed.decision.candidateModels,
+          routing_excluded_candidates: routed.decision.excludedCandidates,
           ...(logTaskPreview ? { task_preview: routed.decision.preview } : {}),
         });
       }

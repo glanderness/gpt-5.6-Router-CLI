@@ -69,6 +69,8 @@ BIN_DIR="$(cd "$BIN_DIR" && pwd)"
 if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   install -m 644 "$SOURCE_DIR/server.mjs" "$APP_DIR/server.mjs"
   install -m 644 "$SOURCE_DIR/router.mjs" "$APP_DIR/router.mjs"
+  install -m 644 "$SOURCE_DIR/router-signals.mjs" "$APP_DIR/router-signals.mjs"
+  install -m 644 "$SOURCE_DIR/router-policy.mjs" "$APP_DIR/router-policy.mjs"
   install -m 644 "$SOURCE_DIR/.env.example" "$APP_DIR/.env.example"
   install -m 644 "$SOURCE_DIR/models/router-models.json" "$APP_DIR/models/router-models.json"
   install -m 755 "$SOURCE_DIR/codex-router" "$APP_DIR/codex-router"
