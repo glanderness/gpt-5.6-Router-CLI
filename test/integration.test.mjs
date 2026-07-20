@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 import { CHATGPT_CODEX_BASE_URL } from "../auth-config.mjs";
@@ -152,7 +153,7 @@ test("router uses the official ChatGPT Codex upstream for the current Codex logi
   await new Promise((resolve) => reserved.close(resolve));
   const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], {
     cwd: projectDir,
-    env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_AUTH_MODE: "auto", ROUTER_CODEX_LOGIN_MODE: "chatgpt", ROUTER_API_KEY: "", ROUTER_UPSTREAM_BASE: "" },
+    env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_AUTH_MODE: "auto", ROUTER_CODEX_LOGIN_MODE: "chatgpt", ROUTER_API_KEY: "", ROUTER_UPSTREAM_BASE: "", ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"), ROUTER_CODEX_CWD: os.tmpdir() },
     stdio: ["ignore", "pipe", "pipe"],
   });
   t.after(() => child.kill("SIGTERM"));
@@ -187,6 +188,8 @@ test("router uses the OpenAI API upstream for an OpenAI API key login", async (t
       ROUTER_CODEX_LOGIN_MODE: "api_key",
       ROUTER_API_KEY: "",
       ROUTER_UPSTREAM_BASE: "",
+      ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"),
+      ROUTER_CODEX_CWD: os.tmpdir(),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });
@@ -211,6 +214,8 @@ test("provider key authentication requires an explicit upstream", async (t) => {
       ROUTER_AUTH_MODE: "provider_key",
       ROUTER_API_KEY: "provider-key",
       ROUTER_UPSTREAM_BASE: "",
+      ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"),
+      ROUTER_CODEX_CWD: os.tmpdir(),
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

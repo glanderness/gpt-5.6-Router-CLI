@@ -9,7 +9,7 @@ while [[ -L "$SOURCE_PATH" ]]; do
 done
 SCRIPT_DIR="$(cd -- "$(dirname -- "$SOURCE_PATH")" && pwd)"
 
-if [[ -f "$SCRIPT_DIR/.env" ]]; then
+if [[ "${ROUTER_SKIP_ENV_FILE:-0}" != "1" && -f "$SCRIPT_DIR/.env" ]]; then
   set -a
   source "$SCRIPT_DIR/.env"
   set +a
@@ -37,8 +37,22 @@ fi
 
 export CODEX_BIN="$CODEX_COMMAND"
 
+detect_codex_profile() {
+  local previous="" argument
+  for argument in "$@"; do
+    if [[ "$previous" == "-p" || "$previous" == "--profile" ]]; then
+      export ROUTER_CODEX_PROFILE="$argument"
+      return
+    fi
+    previous="$argument"
+  done
+}
+
+detect_codex_profile "$@"
+
 if [[ "${1:-}" == "--router-auth-status" ]]; then
-  exec "$NODE_COMMAND" "$SCRIPT_DIR/auth-config-cli.mjs" --json
+  shift
+  exec "$NODE_COMMAND" "$SCRIPT_DIR/auth-config-cli.mjs" --json "$@"
 fi
 
 load_auth_config() {
@@ -60,18 +74,13 @@ load_auth_config() {
 
 load_auth_config
 if [[ "$selected_auth_mode" == "openai" && "$codex_login_mode" == "unknown" ]]; then
-  echo "No active Codex login was detected. Starting Codex sign-in..." >&2
-  "$CODEX_COMMAND" login
-  load_auth_config
+  echo "No active Codex login was detected." >&2
+  echo "GPT5.6-Router will not change your Codex login. Run 'codex login' separately, or configure a provider key for the Router." >&2
+  exit 1
 fi
 
 if [[ -z "$selected_auth_mode" || -z "$resolved_upstream_base" ]]; then
   echo "Router authentication configuration could not be resolved." >&2
-  exit 1
-fi
-
-if [[ "$selected_auth_mode" == "openai" && "$codex_login_mode" == "unknown" ]]; then
-  echo "Codex login was not completed." >&2
   exit 1
 fi
 
@@ -84,11 +93,16 @@ if [[ "$selected_auth_mode" == "provider_key" ]]; then
     -c "model_providers.gpt_5_6_router.env_key=\"$provider_key_env\""
   )
   echo "Router authentication: provider key from $provider_key_env" >&2
-else
+elif [[ "$selected_auth_mode" == "openai" ]]; then
   auth_config_args+=(
     -c 'model_providers.gpt_5_6_router.requires_openai_auth=true'
   )
   echo "Router authentication: current Codex login ($codex_login_mode)" >&2
+else
+  auth_config_args+=(
+    -c 'model_providers.gpt_5_6_router.requires_openai_auth=false'
+  )
+  echo "Router authentication: no authorization header (matching the selected Codex provider)" >&2
 fi
 echo "Router upstream: $resolved_upstream_base" >&2
 

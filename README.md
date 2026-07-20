@@ -2,7 +2,7 @@
 
 GPT5.6-Router 是一个面向 Codex CLI 的本地模型 Router。你只需在 Codex 中选择稳定模型标识 `gpt-5.6-router`，Router 就会根据任务复杂度，在 Luna、Terra 与 Sol 三档模型和推理强度之间自动选择。
 
-项目同时支持当前 Codex 登录和第三方 API。默认自动检测认证方式：检测到第三方 key 时使用对应服务商，否则读取 Codex 登录状态，在 ChatGPT/Plus 与 OpenAI API key 之间选择正确的官方上游。
+项目不会要求你再配置一次上游。它会读取原生 Codex 当前选中的 Provider，复用已有的上游地址和认证方式：ChatGPT/Plus、OpenAI API key，以及兼容 Responses API 的第三方 Provider 都可以沿用。
 
 ```text
 Codex CLI
@@ -22,54 +22,67 @@ Your Responses API provider
 - 日志可核对 Router 选择和上游实际返回的模型。
 - 独立运行，不修改 `~/.codex/config.toml`；普通 `codex` 命令保持原样。
 
+## 原生 Codex 隔离保证
+
+GPT5.6-Router 只在用户主动运行 `codex-router` 时生效。安装和运行过程中：
+
+- 不创建或替换名为 `codex` 的命令；
+- 不修改 `~/.codex/config.toml`、Codex 登录状态、默认模型或已有会话；
+- Router 使用的 `-c` 和 `-m` 参数只作用于当前 `codex-router` 进程；
+- 不向父终端写入环境变量；普通 `codex` 不会连接本地 Router；
+- 若没有登录，Router 会停止并提示用户自行处理，不会主动运行登录命令；
+- 安装器发现同名命令属于其他程序时会停止，不会覆盖它。
+
+完整的隔离边界和验证矩阵见 [Codex Isolation](docs/CODEX_ISOLATION.md)。
+
+因此可以在同一个终端中并行使用：
+
+```bash
+codex         # 用户原来的 Codex CLI
+codex-router  # 仅本次会话使用 GPT5.6-Router
+```
+
 完整的决策设计见 [Router Architecture](docs/ROUTER_ARCHITECTURE.md)。
 
 ## 开始使用
 
-### 1. 准备条件
+准备条件：macOS 或 Linux、Node.js 20+、Codex CLI 0.144.0+。
 
-- macOS 或 Linux
-- Node.js 20+
-- Codex CLI 0.144.0+
-- ChatGPT/Plus 登录，或一个兼容 OpenAI Responses API 的第三方服务
+### 1. 先让原生 Codex 正常工作
 
-第三方 key 只保存在权限为 `600` 的本地 `.env` 中，不会写入项目或日志。
+先按照 Codex 自己的流程完成一种上游配置：
 
-### 2. 获取项目并安装
+- 使用 ChatGPT/Plus 登录；
+- 使用 OpenAI API key 登录；
+- 或在 Codex 配置中选中一个兼容 Responses API 的第三方 Provider。
 
-从 GitHub 项目页的 **Code** 按钮复制仓库地址后执行：
+然后直接运行 `codex`，确认它可以正常完成一条简单任务。GPT5.6-Router 不负责创建登录、不修改 `~/.codex/config.toml`，也不会替换原来的 `codex` 命令。
+
+### 2. 一条命令安装 Router
+
+确认原生 Codex 可用后，运行：
 
 ```bash
-git clone <repository-url>
+curl -fsSL https://raw.githubusercontent.com/glanderness/GPT5.6-Router/main/bootstrap.sh | bash
+```
+
+安装器会自动读取并复用当前 Codex 的：
+
+- `model_provider`；
+- Provider 的 `base_url` 和 `wire_api`；
+- `requires_openai_auth` 或 `env_key` 认证方式。
+
+它只读取认证配置，不读取、复制或显示 key 内容。配置不完整时，安装会停止并指出应先修正哪一项。
+
+如果你更希望先查看本地文件，也可以使用源码安装：
+
+```bash
+git clone https://github.com/glanderness/GPT5.6-Router.git
 cd GPT5.6-Router
 ./install.sh
 ```
 
-如果 Codex CLI 当前使用 ChatGPT/Plus 登录，到这里已经完成。Router 会自动使用官方 ChatGPT Codex 上游。
-
-使用第三方 API 时：
-
-```bash
-./install.sh --upstream-base https://api.example.com/v1 --provider-key
-```
-
-安装器会隐藏输入内容，并自动切换到第三方认证。如果 key 已经保存在环境变量中，可以直接复用：
-
-```bash
-./install.sh \
-  --upstream-base https://api.example.com/v1 \
-  --api-key-env EXAMPLE_PROVIDER_KEY
-```
-
-安装脚本会创建独立运行目录、写入本地 `.env`、安装 `codex-router` 和 `codex-router-service` 命令，并启动 Router。`.env` 被 Git 忽略，不会随项目提交。
-
-只安装、不立即启动服务：
-
-```bash
-./install.sh --no-start
-```
-
-之后重复运行安装脚本即可更新认证方式或上游地址，已有配置会保留。
+只安装、不立即启动服务：`./install.sh --no-start`。
 
 ### 3. 运行
 
@@ -85,13 +98,13 @@ codex-router "[最强] 深度分析这个项目的架构"
 codex-router exec "请总结 README"
 ```
 
-若 `~/.local/bin` 不在 `PATH` 中，安装脚本会显示需要添加的路径。未进行全局安装时，可在仓库目录运行：
+若 `~/.local/bin` 不在 `PATH` 中，安装器会显示需要添加的路径。源码目录中也可以直接运行：
 
 ```bash
 ./codex-router
 ```
 
-## 配置上游与模型
+## 自动复用 Codex 上游
 
 安装后的配置文件位于：
 
@@ -105,12 +118,12 @@ codex-router exec "请总结 README"
 ROUTER_HOST=localhost
 ROUTER_PORT=8788
 
-# 默认自动选择：存在 ROUTER_API_KEY 时使用第三方认证，否则使用当前 Codex 登录。
+# 默认读取当前 Codex Provider。通常不需要修改下面三项。
 ROUTER_AUTH_MODE=auto
 ROUTER_API_KEY_ENV=ROUTER_API_KEY
 ROUTER_API_KEY=
 
-# Plus 模式可以留空；第三方认证必须填写。
+# 可选的高级上游覆盖；正常安装保持为空。
 ROUTER_UPSTREAM_BASE=
 
 # 如果服务商使用不同的模型标识，可在这里覆盖。
@@ -124,10 +137,10 @@ ROUTER_RESPONSE_FOOTER=1
 
 自动选择顺序：
 
-1. `ROUTER_AUTH_MODE=auto` 且 `ROUTER_API_KEY_ENV` 指向的变量有值：使用第三方 key。
-2. 没有第三方 key：读取 `codex login status`。
-3. ChatGPT/Plus 登录使用 ChatGPT Codex 上游；OpenAI API key 登录使用 OpenAI API 上游。
-4. 用户可以用 `ROUTER_AUTH_MODE=openai` 或 `provider_key` 明确指定。
+1. 如果 Router 自己设置了高级覆盖，使用覆盖值；
+2. 否则读取当前 Codex 的 `model_provider` 和对应 Provider 配置；
+3. 自定义 Provider 复用其 `base_url`，并匹配 `requires_openai_auth`、`env_key` 或无认证模式；
+4. 默认官方 Provider 根据当前 Codex 登录类型选择 ChatGPT Codex 或 OpenAI API 上游。
 
 查看当前选择，不启动会话：
 
@@ -135,7 +148,7 @@ ROUTER_RESPONSE_FOOTER=1
 codex-router --router-auth-status
 ```
 
-输出不会包含 key 内容。
+输出会显示 Provider 名称、认证来源和上游地址，但不会包含 key 内容。
 
 第三方上游至少需要支持：
 
@@ -143,7 +156,15 @@ codex-router --router-auth-status
 - 流式 Responses 响应（如果你会使用流式 Codex 请求）；
 - 你配置的三个模型标识。
 
-如果没有配置 `ROUTER_UPSTREAM_BASE`，Router 会根据 Codex 登录类型自动使用 ChatGPT Codex 或 OpenAI API 上游。第三方 key 模式缺少上游地址时会在启动前返回明确提示。
+第三方 Provider 必须使用 `wire_api = "responses"`。如果 Provider 使用 `env_key`，对应环境变量需要像运行原生 Codex 时一样在当前终端可用。
+
+只有在无法复用原生配置或需要临时切换时，才建议使用高级覆盖：
+
+```bash
+./install.sh --upstream-base https://api.example.com/v1 --api-key-env EXAMPLE_PROVIDER_KEY
+```
+
+交互输入 key 的 `--provider-key` 仍然保留；只有这种高级方式会把 key 写入权限为 `600` 的 Router 本地 `.env`。
 
 ## 路由规则
 
@@ -227,7 +248,10 @@ codex-router-service logs
 codex-router-service restart
 codex-router-service ensure
 codex-router-service stop
+codex-router-uninstall
 ```
+
+`codex-router-uninstall` 只删除本项目安装目录、运行日志和本项目创建的三个命令链接，不修改 Codex 主配置或登录信息。
 
 升级项目后运行：
 
@@ -236,7 +260,7 @@ git pull
 ./install.sh
 ```
 
-已有 `.env` 会被保留；如需变更上游地址，重新传入 `--upstream-base` 即可。
+已有 `.env` 会被保留。原生 Codex Provider 发生变化后，下次运行 `codex-router` 会重新读取并刷新本地服务。
 
 ## 本地开发与测试
 

@@ -18,7 +18,7 @@ Usage: ./install.sh [--upstream-base URL] [--auth-mode MODE] [--provider-key] [-
 
 Options:
   --upstream-base URL  Set the Responses API base URL for the selected provider.
-  --auth-mode MODE  Set auto, openai, or provider_key authentication.
+  --auth-mode MODE  Set auto, openai, provider_key, or none authentication.
   --provider-key  Prompt securely for a third-party provider key.
   --api-key-env NAME  Read a provider key from the named environment variable.
   --no-start  Install commands and configuration without starting the Router service.
@@ -38,7 +38,7 @@ while [[ $# -gt 0 ]]; do
       ;;
     --auth-mode)
       [[ $# -ge 2 ]] || {
-        echo "--auth-mode requires auto, openai, or provider_key." >&2
+        echo "--auth-mode requires auto, openai, provider_key, or none." >&2
         exit 2
       }
       AUTH_MODE_OPTION="$2"
@@ -71,7 +71,7 @@ while [[ $# -gt 0 ]]; do
   shift
 done
 
-for command_name in curl install ln node; do
+for command_name in curl install ln node ps readlink rm; do
   command -v "$command_name" >/dev/null 2>&1 || {
     echo "Required command was not found: $command_name" >&2
     exit 1
@@ -103,11 +103,40 @@ mkdir -p "$APP_DIR/models" "$BIN_DIR"
 APP_DIR="$(cd "$APP_DIR" && pwd)"
 BIN_DIR="$(cd "$BIN_DIR" && pwd)"
 
+assert_command_path_available() {
+  local path="$1" target_name="$2" existing=""
+  if [[ -L "$path" ]]; then
+    existing="$(readlink "$path")"
+    case "$existing" in
+      "$APP_DIR/$target_name"|"$LEGACY_RUNTIME_DIR/app/$target_name")
+        return 0
+        ;;
+      *)
+        echo "Refusing to replace an existing command link: $path -> $existing" >&2
+        exit 1
+        ;;
+    esac
+  fi
+  if [[ -e "$path" ]]; then
+    echo "Refusing to replace an existing command: $path" >&2
+    exit 1
+  fi
+}
+
+install_command_link() {
+  local target="$1" path="$2"
+  ln -sfn "$target" "$path"
+}
+
+assert_command_path_available "$BIN_DIR/codex-router" codex-router
+assert_command_path_available "$BIN_DIR/codex-router-service" router-service.sh
+assert_command_path_available "$BIN_DIR/codex-router-uninstall" uninstall.sh
+
 if [[ "$APP_DIR" != "$LEGACY_RUNTIME_DIR/app" && -f "$LEGACY_RUNTIME_DIR/router.pid" ]]; then
   legacy_pid="$(<"$LEGACY_RUNTIME_DIR/router.pid")"
   if [[ "$legacy_pid" =~ ^[0-9]+$ ]] && kill -0 "$legacy_pid" 2>/dev/null; then
     legacy_command="$(ps -p "$legacy_pid" -o command= 2>/dev/null || true)"
-    if [[ "$legacy_command" == *"server.mjs"* ]]; then
+    if [[ "$legacy_command" == *"$LEGACY_RUNTIME_DIR/app/server.mjs"* ]]; then
       kill "$legacy_pid"
       echo "Stopped the previous Router service during migration."
     fi
@@ -122,11 +151,16 @@ if [[ "$SOURCE_DIR" != "$APP_DIR" ]]; then
   install -m 644 "$SOURCE_DIR/router-policy.mjs" "$APP_DIR/router-policy.mjs"
   install -m 644 "$SOURCE_DIR/auth-config.mjs" "$APP_DIR/auth-config.mjs"
   install -m 644 "$SOURCE_DIR/auth-config-cli.mjs" "$APP_DIR/auth-config-cli.mjs"
+  install -m 644 "$SOURCE_DIR/codex-upstream-config.mjs" "$APP_DIR/codex-upstream-config.mjs"
   install -m 644 "$SOURCE_DIR/.env.example" "$APP_DIR/.env.example"
   install -m 644 "$SOURCE_DIR/models/router-models.json" "$APP_DIR/models/router-models.json"
   install -m 755 "$SOURCE_DIR/codex-router" "$APP_DIR/codex-router"
   install -m 755 "$SOURCE_DIR/router-service.sh" "$APP_DIR/router-service.sh"
+  install -m 755 "$SOURCE_DIR/uninstall.sh" "$APP_DIR/uninstall.sh"
 fi
+
+printf '%s\n' "gpt5.6-router" >"$APP_DIR/.gpt5.6-router-install"
+chmod 600 "$APP_DIR/.gpt5.6-router-install"
 
 set_env_value() {
   local key="$1" value="$2" encoded
@@ -215,10 +249,11 @@ if [[ -n "${CODEX_BIN:-}" ]]; then
 fi
 
 chmod 600 "$APP_DIR/.env"
-auth_json="$("$APP_DIR/codex-router" --router-auth-status)"
+auth_json="$(CODEX_BIN="$codex_path" "$APP_DIR/codex-router" --router-auth-status --require-ready)"
 
-ln -sfn "$APP_DIR/codex-router" "$BIN_DIR/codex-router"
-ln -sfn "$APP_DIR/router-service.sh" "$BIN_DIR/codex-router-service"
+install_command_link "$APP_DIR/codex-router" "$BIN_DIR/codex-router"
+install_command_link "$APP_DIR/router-service.sh" "$BIN_DIR/codex-router-service"
+install_command_link "$APP_DIR/uninstall.sh" "$BIN_DIR/codex-router-uninstall"
 
 if (( START_SERVICE == 1 )); then
   "$APP_DIR/router-service.sh" restart
@@ -233,7 +268,10 @@ node -e '
   const config = JSON.parse(process.argv[1]);
   const auth = config.selectedMode === "provider_key"
     ? `provider key from ${config.providerKeyEnv}`
-    : "current Codex login (ChatGPT/Plus or OpenAI API key)";
+    : (config.selectedMode === "openai"
+      ? "current Codex login (ChatGPT/Plus or API key)"
+      : "no authorization header");
+  console.log(`Codex provider: ${config.codexProviderName} (${config.codexProviderId})`);
   console.log(`Authentication: ${auth}`);
   console.log(`Upstream: ${config.upstreamBase}`);
 ' "$auth_json"

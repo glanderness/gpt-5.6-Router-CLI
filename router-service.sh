@@ -66,6 +66,12 @@ read_pid() {
   printf '%s' "$pid"
 }
 
+pid_belongs_to_service() {
+  local pid="$1" command=""
+  command="$(ps -p "$pid" -o command= 2>/dev/null || true)"
+  [[ "$command" == *"$SCRIPT_DIR/server.mjs"* ]]
+}
+
 case "${1:-status}" in
   start)
     command -v "$NODE_BIN" >/dev/null 2>&1 || {
@@ -97,7 +103,7 @@ case "${1:-status}" in
     exit 1
     ;;
   stop)
-    if pid="$(read_pid 2>/dev/null)" && kill -0 "$pid" 2>/dev/null; then
+    if pid="$(read_pid 2>/dev/null)" && kill -0 "$pid" 2>/dev/null && pid_belongs_to_service "$pid"; then
       kill "$pid"
       for _ in {1..30}; do
         kill -0 "$pid" 2>/dev/null || break

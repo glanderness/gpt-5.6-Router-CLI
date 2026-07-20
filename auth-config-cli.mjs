@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { resolveAuthConfig } from "./auth-config.mjs";
+import { discoverCodexUpstream } from "./codex-upstream-config.mjs";
 
 function detectCodexLoginMode(environment) {
   const explicit = String(environment.ROUTER_CODEX_LOGIN_MODE || "").trim().toLowerCase();
@@ -45,7 +46,11 @@ try {
     ...process.env,
     ROUTER_CODEX_LOGIN_MODE: detectCodexLoginMode(process.env),
   };
-  const config = resolveAuthConfig(environment);
+  const codexUpstream = discoverCodexUpstream(environment, environment.ROUTER_CODEX_CWD || process.cwd());
+  const config = resolveAuthConfig(environment, codexUpstream);
+  if (process.argv.includes("--require-ready") && config.selectedMode === "openai" && config.codexLoginMode === "unknown") {
+    throw new Error("Codex authentication is not ready. Finish the native Codex setup and confirm that 'codex' works before installing GPT5.6-Router.");
+  }
   if (process.argv.includes("--shell")) printShell(config);
   else console.log(JSON.stringify(config));
 } catch (error) {

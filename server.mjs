@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import http from "node:http";
 import { Readable } from "node:stream";
 import { resolveAuthConfig } from "./auth-config.mjs";
+import { discoverCodexUpstream } from "./codex-upstream-config.mjs";
 import { MODEL_AUTO, routeRequest } from "./router.mjs";
 
 const host = process.env.ROUTER_HOST || "localhost";
@@ -10,7 +11,10 @@ let authConfig = null;
 let upstreamBase = null;
 let upstreamConfigurationError = null;
 try {
-  authConfig = resolveAuthConfig(process.env);
+  authConfig = resolveAuthConfig(
+    process.env,
+    discoverCodexUpstream(process.env, process.env.ROUTER_CODEX_CWD || process.cwd()),
+  );
   upstreamBase = authConfig.upstreamBase;
 } catch (error) {
   upstreamConfigurationError = error?.message || String(error);

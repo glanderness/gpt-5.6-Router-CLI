@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +14,10 @@ function authStatus(overrides = {}) {
     encoding: "utf8",
     env: {
       ...process.env,
+      CODEX_HOME: path.join(projectDir, "test", "empty-codex-home"),
+      ROUTER_CODEX_CONFIG: path.join(projectDir, "test", "missing-codex-config.toml"),
+      ROUTER_CODEX_CWD: os.tmpdir(),
+      ROUTER_SKIP_ENV_FILE: "1",
       ROUTER_AUTH_MODE: "auto",
       ROUTER_CODEX_LOGIN_MODE: "chatgpt",
       ROUTER_API_KEY_ENV: "ROUTER_API_KEY",

@@ -18,6 +18,34 @@ test("an OpenAI API key login uses the official API upstream by default", () => 
   assert.equal(config.upstreamBase, OPENAI_API_BASE_URL);
 });
 
+test("auto authentication reuses a custom Codex provider upstream", () => {
+  const config = resolveAuthConfig({ ROUTER_CODEX_LOGIN_MODE: "api_key" }, {
+    providerId: "custom",
+    providerName: "Existing Provider",
+    providerKind: "custom",
+    baseUrl: "https://provider.example.com/v1",
+    envKey: null,
+    requiresOpenAIAuth: true,
+  });
+  assert.equal(config.selectedMode, "openai");
+  assert.equal(config.upstreamBase, "https://provider.example.com/v1");
+  assert.equal(config.codexProviderId, "custom");
+});
+
+test("auto authentication reuses a custom Codex env_key", () => {
+  const config = resolveAuthConfig({ EXISTING_PROVIDER_KEY: "configured" }, {
+    providerId: "custom",
+    providerName: "Existing Provider",
+    providerKind: "custom",
+    baseUrl: "https://provider.example.com/v1",
+    envKey: "EXISTING_PROVIDER_KEY",
+    requiresOpenAIAuth: false,
+  });
+  assert.equal(config.selectedMode, "provider_key");
+  assert.equal(config.providerKeyEnv, "EXISTING_PROVIDER_KEY");
+  assert.equal(config.authSource, "codex_provider_environment");
+});
+
 test("auto authentication selects a configured provider key", () => {
   const config = resolveAuthConfig({
     ROUTER_API_KEY: "provider-key",
