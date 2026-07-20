@@ -17,7 +17,7 @@ GPT5.6-Router 面向 Codex CLI，提供一个虚拟模型 `gpt-5.6-router`。客
 
 ```text
 router-signals.mjs
-  请求特征、11 维信号、加权分数、置信度、档位下限
+  请求特征、Luna 资格层、11 维信号、加权分数、置信度、档位下限
 
 router-policy.mjs
   档位到模型与推理强度的映射、能力元数据、候选过滤
@@ -49,6 +49,11 @@ Request Feature Extraction
   ▼
 Manual Override
   │ /luna /terra /sol
+  ▼
+Luna Eligibility
+  │ 明确日常对话意图
+  │ 无工具、非文本、复杂信号和上下文依赖
+  │ 通过时直接使用 Luna
   ▼
 11 Signal Extractors
   │ 每个信号输出 value、weight、contribution、evidence
@@ -92,8 +97,26 @@ Response + Observability
 | `requires_tools` | 任务文本或 tool choice 是否明确要求工具 |
 | `modalities` | text、image、audio、file 等输入类型 |
 | `structured_output` | 是否要求结构化输出 |
+| `simple_intent` | 日常对话意图类别、证据与置信度 |
+| `context_dependent` | 最新请求是否依赖上一轮上下文 |
 
 token 估算对 ASCII 字符使用约 `4 字符/token`，对非 ASCII 字符使用约 `1 字符/token`，目的是获得稳定的本地近似值，不增加额外模型调用。
+
+## Luna 资格层
+
+Luna 资格层位于加权评分之前，只处理证据充分的独立简单请求。当前覆盖问候、关心、致谢、确认、告别、轻量娱乐和简单身份问答。
+
+进入 Luna 必须同时满足：
+
+- 已识别明确的简单意图。
+- 最新任务不超过 80 个估算 token。
+- 当前任务上下文不超过 8,000 个估算 token。
+- 纯文本输入，不要求结构化输出。
+- 没有明确工具需求。
+- 没有推理、代码、多步骤、技术深度或复杂范围信号。
+- 不包含“继续”“刚才”“上面”“把这个”等上下文依赖表达。
+
+请求中仅提供了可用工具，不代表任务实际需要工具，因此不会单独阻止日常对话进入 Luna。资格检查不通过时，请求继续进入原有的加权评分路径。
 
 ## 11 维信号
 
@@ -289,6 +312,8 @@ minimumMode=Sol → gpt-5.6-sol → high
 - `routing_classified_mode`
 - `routing_score`
 - `routing_confidence`
+- `routing_classification_path`
+- `routing_luna_eligibility`
 - `routing_ambiguity_fallback`
 - `routing_signal_details`
 - `routing_features`

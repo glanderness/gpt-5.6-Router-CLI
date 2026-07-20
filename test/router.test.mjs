@@ -29,6 +29,52 @@ test("greetings and simple tasks select luna", () => {
   assert.equal(classifyTask("直接回答：1 + 1 等于几").mode, "luna");
 });
 
+test("standalone everyday conversation uses the Luna eligibility path", () => {
+  for (const input of [
+    "今天过得怎么样",
+    "你今天怎么样？",
+    "你最近如何",
+    "谢谢",
+    "好的",
+    "讲个笑话",
+    "晚安",
+    "你是谁",
+  ]) {
+    const result = classifyTask(input);
+    assert.equal(result.mode, "luna", input);
+    assert.equal(result.classificationPath, "luna-eligibility", input);
+    assert.equal(result.lunaEligibility.eligible, true, input);
+    assert.ok(result.confidence >= 0.9, input);
+  }
+  assert.equal(classifyTask("如何").mode, "terra");
+});
+
+test("short requests that depend on prior context stay on Terra", () => {
+  for (const input of ["继续", "按刚才的方案执行", "把这个修改一下", "上面的结论为什么不对"]) {
+    const result = classifyTask(input);
+    assert.equal(result.mode, "terra", input);
+    assert.equal(result.minimumMode, "terra", input);
+    assert.equal(result.features.context_dependent, true, input);
+    assert.equal(result.lunaEligibility.eligible, false, input);
+  }
+});
+
+test("offered tools do not block casual Luna routing unless the task requires them", () => {
+  const casual = classifyRequest({
+    input: "今天过得怎么样",
+    tools: [{ type: "function", name: "read_file" }],
+  });
+  assert.equal(casual.mode, "luna");
+  assert.equal(casual.features.requires_tools, false);
+
+  const required = classifyRequest({
+    input: "读取文件并总结",
+    tools: [{ type: "function", name: "read_file" }],
+  });
+  assert.equal(required.minimumMode, "terra");
+  assert.equal(required.mode, "terra");
+});
+
 test("normal scoped implementation selects terra", () => {
   assert.equal(classifyTask("请修改单个文件中的按钮文案并验证显示").mode, "terra");
   assert.equal(classifyTask("实现一个普通的 API 接口并运行测试").mode, "terra");

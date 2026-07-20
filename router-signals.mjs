@@ -8,6 +8,14 @@ const manualModes = [
 
 const patterns = {
   greeting: /^(?:你好|您好|嗨|哈喽|在吗|hi|hello|hey)(?:[!！。,.，?？\s]*)$/iu,
+  socialGreeting: /^(?:早上好|上午好|中午好|下午好|晚上好|早安|晚安|good\s*(?:morning|afternoon|evening|night))(?:[!！。,.，?？\s]*)$/iu,
+  wellbeing: /^(?:(?:你|您)(?:今天|最近|这几天|现在)?(?:过得|感觉|状态)?(?:怎么样|好吗|还好吗|如何)|(?:今天|最近|这几天)(?:过得|感觉|状态)?(?:怎么样|好吗|还好吗|如何)|how\s+are\s+you)(?:[!！。,.，?？\s]*)$/iu,
+  gratitude: /^(?:谢谢|感谢|多谢|谢了|辛苦了|thanks|thank\s+you)(?:你|您|啦|了|啊|呀|哈)?(?:[!！。,.，?？\s]*)$/iu,
+  acknowledgement: /^(?:好|好的|好呀|可以|行|明白|明白了|知道了|收到|没问题|ok|okay|got\s+it)(?:啦|了|啊|呀|哈)?(?:[!！。,.，?？\s]*)$/iu,
+  farewell: /^(?:再见|拜拜|回头见|下次聊|先这样|晚点聊|bye|goodbye|see\s+you)(?:啦|了|啊|呀)?(?:[!！。,.，?？\s]*)$/iu,
+  lightEntertainment: /^(?:(?:给我)?(?:讲|说)(?:一个|个)?(?:笑话|段子|小故事)|(?:来|出)(?:一个|个)?谜语|讲个笑话|tell\s+me\s+a\s+(?:joke|story))(?:吧|呗|呀|啊)?(?:[!！。,.，?？\s]*)$/iu,
+  casualIdentity: /^(?:你是谁|你叫什么(?:名字)?|你在(?:干嘛|做什么)|你会什么|who\s+are\s+you|what\s+can\s+you\s+do)(?:[!！。,.，?？\s]*)$/iu,
+  contextDependency: /(?:刚才|之前|上面|前面|上一轮|前文|上述|按这个|照这个|基于这个)|^(?:继续|接着|然后呢|下一步|再来|往下|把这个|把那个|把它|修改它|改一下它|这个|那个|它)/iu,
   shortQuestion: /^(?:什么是|怎么|如何|能否|可以吗|在吗|多少钱|几点|what is|how do|can you)(?:.{0,36})[?？]?$/iu,
   simple: /翻译|润色|改写|总结|格式化|排版|标题|一句话|提取要点|简单问答|只回复|简短回答|直接回答|直接告诉我|translate|rewrite|summari[sz]e|format|headline|just reply|brief answer|answer directly/giu,
   reasoningStrong: /深度分析|深入研究|研究报告|走势预测|投资分析|行业研判|预测模型|根因分析|严谨推导|证明这个|系统性分析|deep analysis|research report|market forecast|investment analysis|root cause|rigorous proof/giu,
@@ -40,6 +48,17 @@ const baseScore = 0.38;
 const lunaBoundary = 0.30;
 const solBoundary = 0.65;
 const ambiguityConfidenceThreshold = 0.65;
+
+const simpleIntentRules = [
+  { category: "greeting", confidence: 0.99, pattern: patterns.greeting },
+  { category: "social-greeting", confidence: 0.98, pattern: patterns.socialGreeting },
+  { category: "wellbeing", confidence: 0.96, pattern: patterns.wellbeing },
+  { category: "gratitude", confidence: 0.98, pattern: patterns.gratitude },
+  { category: "acknowledgement", confidence: 0.97, pattern: patterns.acknowledgement },
+  { category: "farewell", confidence: 0.98, pattern: patterns.farewell },
+  { category: "light-entertainment", confidence: 0.9, pattern: patterns.lightEntertainment },
+  { category: "casual-identity", confidence: 0.94, pattern: patterns.casualIdentity },
+];
 
 function uniqueMatches(text, pattern, limit = 6) {
   return [...new Set(text.match(pattern) || [])].slice(0, limit);
@@ -138,6 +157,8 @@ export function extractRequestFeatures(body = {}) {
   const maxOutputTokens = Number.isFinite(body?.max_output_tokens)
     ? Math.max(0, Number(body.max_output_tokens))
     : 0;
+  const simpleIntent = simpleIntentRules.find((rule) => rule.pattern.test(latestUserText.trim())) || null;
+  const contextDependent = patterns.contextDependency.test(latestUserText.trim());
 
   return {
     latestUserText,
@@ -156,6 +177,11 @@ export function extractRequestFeatures(body = {}) {
       body?.response_format
       || (body?.text?.format?.type && body.text.format.type !== "text")
     ),
+    simpleIntent: simpleIntent
+      ? { category: simpleIntent.category, confidence: simpleIntent.confidence, evidence: latestUserText.trim() }
+      : null,
+    contextDependent,
+    contextDependencyEvidence: contextDependent ? latestUserText.trim().slice(0, 80) : null,
   };
 }
 
@@ -256,6 +282,32 @@ export function confidenceForScore(score) {
   return Number((0.5 + 0.5 * (1 - Math.exp(-12 * distance))).toFixed(3));
 }
 
+function evaluateLunaEligibility(features, signalDetails) {
+  const exclusions = [];
+  if (!features.simpleIntent) exclusions.push("no-explicit-simple-intent");
+  if (features.contextDependent) exclusions.push("context-dependent-request");
+  if (features.latestTaskTokens > 80) exclusions.push("latest-task-too-long");
+  if (features.taskContextTokens > 8_000) exclusions.push("context-too-long");
+  if (features.requiresTools) exclusions.push("tools-required");
+  if (features.hasStructuredOutput) exclusions.push("structured-output");
+  if (features.modalities.some((item) => item !== "text")) exclusions.push("non-text-input");
+
+  for (const name of ["reasoning", "codePresence", "multiStep", "technicalDepth", "scope"]) {
+    const detail = signalDetails.find((item) => item.name === name);
+    if (detail?.value > 0) exclusions.push(`complex-signal:${name}`);
+  }
+  const constraints = signalDetails.find((item) => item.name === "constraints");
+  if (constraints?.value > 0.25) exclusions.push("multiple-constraints");
+
+  return {
+    eligible: Boolean(features.simpleIntent) && exclusions.length === 0,
+    category: features.simpleIntent?.category || null,
+    confidence: features.simpleIntent?.confidence || 0,
+    evidence: features.simpleIntent?.evidence || null,
+    exclusions,
+  };
+}
+
 function featureSummary(features) {
   return {
     latest_task_tokens: features.latestTaskTokens,
@@ -268,6 +320,9 @@ function featureSummary(features) {
     requires_tools: features.requiresTools,
     modalities: features.modalities,
     structured_output: features.hasStructuredOutput,
+    simple_intent: features.simpleIntent,
+    context_dependent: features.contextDependent,
+    context_dependency_evidence: features.contextDependencyEvidence,
   };
 }
 
@@ -286,11 +341,13 @@ export function classifyRequest(body = {}) {
         confidence: 1,
         ambiguityFallback: false,
         manualOverride: true,
+        classificationPath: "manual-override",
+        lunaEligibility: null,
         reason: `人工指定 ${rule.mode}`,
         signals: ["manual override"],
         signalDetails: [],
         features: featureSummary(features),
-        classificationVersion: "signals-v2",
+        classificationVersion: "signals-v3",
       };
     }
   }
@@ -302,6 +359,28 @@ export function classifyRequest(body = {}) {
   );
   const roundedScore = Number(normalizedScore.toFixed(3));
   const initialMode = modeForScore(roundedScore);
+  const lunaEligibility = evaluateLunaEligibility(features, signalDetails);
+
+  if (lunaEligibility.eligible) {
+    return {
+      mode: "luna",
+      initialMode,
+      minimumMode: "luna",
+      score: Math.round(roundedScore * 100),
+      normalizedScore: roundedScore,
+      confidence: lunaEligibility.confidence,
+      ambiguityFallback: false,
+      manualOverride: false,
+      classificationPath: "luna-eligibility",
+      lunaEligibility,
+      reason: `明确简单意图 ${lunaEligibility.category}；Luna 资格通过；基础加权分 ${Math.round(roundedScore * 100)}`,
+      signals: [`简单对话 ${lunaEligibility.category}`],
+      signalDetails,
+      features: featureSummary(features),
+      classificationVersion: "signals-v3",
+    };
+  }
+
   let minimumMode = "luna";
   const floorReasons = [];
 
@@ -325,6 +404,10 @@ export function classifyRequest(body = {}) {
   ) {
     minimumMode = maxMode(minimumMode, "terra");
     floorReasons.push("工具、结构化输出或非文本输入最低使用 Terra");
+  }
+  if (features.contextDependent) {
+    minimumMode = maxMode(minimumMode, "terra");
+    floorReasons.push("请求依赖上一轮上下文，最低使用 Terra");
   }
 
   let mode = maxMode(initialMode, minimumMode);
@@ -360,11 +443,13 @@ export function classifyRequest(body = {}) {
     confidence: Number(confidence.toFixed(3)),
     ambiguityFallback,
     manualOverride: false,
+    classificationPath: "weighted-signals",
+    lunaEligibility,
     reason: reasons.join("；"),
     signals: signalSummaries.length ? signalSummaries : ["默认均衡档"],
     signalDetails,
     features: featureSummary(features),
-    classificationVersion: "signals-v2",
+    classificationVersion: "signals-v3",
   };
 }
 

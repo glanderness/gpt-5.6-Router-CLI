@@ -107,7 +107,7 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.equal(jsonLog.client_request_id, "client-1");
   assert.equal(jsonLog.routing_classified_mode, "luna");
   assert.equal(typeof jsonLog.routing_confidence, "number");
-  assert.equal(jsonLog.routing_version, "signals-v2");
+  assert.equal(jsonLog.routing_version, "signals-v3");
   const decisionLog = await waitForLog(logs, (entry) => entry.event === "routing_decision" && entry.client_request_id === "client-1");
   assert.equal(Array.isArray(decisionLog.routing_signal_details), true);
   assert.equal(decisionLog.routing_signal_details.length, 11);

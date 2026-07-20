@@ -15,6 +15,7 @@ Your Responses API provider
 ## 你会得到什么
 
 - 11 个可记录、可解释的复杂度信号，而不是单一关键词判断。
+- 独立的 Luna 资格层，让明确的日常对话优先使用低延迟档位。
 - Luna / Terra / Sol 三档分类，模糊边界默认使用 Terra。
 - 工具、上下文长度、输入类型和结构化输出的能力匹配。
 - 最终回答单独显示实际选择的模型与推理强度。
@@ -152,6 +153,10 @@ codex-router --router-auth-status
 | 普通开发、文件处理、工具调用、常规分析 | Terra | `medium` |
 | 深度分析、研究报告、系统设计、多文件工程 | Sol | `high` |
 
+在加权复杂度评分之前，Router 会先执行 Luna 资格判断。问候、关心、致谢、确认、告别、轻量娱乐等明确简单意图，在纯文本、无需工具、不依赖上一轮且没有复杂信号时直接使用 Luna。
+
+“继续”“按刚才的方案执行”“把这个修改一下”等请求虽然很短，但依赖历史上下文，因此最低使用 Terra。Codex 提供了工具但当前任务没有要求使用时，不会阻止日常对话进入 Luna。
+
 自动判断使用加权复杂度分数：
 
 ```text
@@ -190,7 +195,7 @@ curl -sS http://localhost:8788/router/decision \
 {
   "selectedModel": "gpt-5.6-sol",
   "reasoningEffort": "high",
-  "classificationVersion": "signals-v2"
+  "classificationVersion": "signals-v3"
 }
 ```
 
