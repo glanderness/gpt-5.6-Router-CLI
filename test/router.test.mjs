@@ -1,6 +1,17 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { MODEL_AUTO, classifyTask, extractLatestUserText, reasoningEfforts, responseFooterLine, routeRequest } from "../router.mjs";
+import {
+  MODEL_AUTO,
+  classifyRequest,
+  classifyTask,
+  confidenceForScore,
+  extractLatestUserText,
+  extractRequestFeatures,
+  reasoningEfforts,
+  responseFooterLine,
+  routeRequest,
+  selectRoutingPolicy,
+} from "../router.mjs";
 
 test("manual mode has priority", () => {
   assert.equal(classifyTask("[最强] 帮我处理这个任务").mode, "sol");
@@ -18,10 +29,92 @@ test("greetings and simple tasks select luna", () => {
   assert.equal(classifyTask("直接回答：1 + 1 等于几").mode, "luna");
 });
 
+test("standalone everyday conversation uses the Luna eligibility path", () => {
+  for (const input of [
+    "今天过得怎么样",
+    "你今天怎么样？",
+    "你最近如何",
+    "谢谢",
+    "好的",
+    "讲个笑话",
+    "晚安",
+    "你是谁",
+  ]) {
+    const result = classifyTask(input);
+    assert.equal(result.mode, "luna", input);
+    assert.equal(result.classificationPath, "luna-eligibility", input);
+    assert.equal(result.lunaEligibility.eligible, true, input);
+    assert.ok(result.confidence >= 0.9, input);
+  }
+  assert.equal(classifyTask("如何").mode, "terra");
+});
+
+test("short requests that depend on prior context stay on Terra", () => {
+  for (const input of ["继续", "按刚才的方案执行", "把这个修改一下", "上面的结论为什么不对"]) {
+    const result = classifyTask(input);
+    assert.equal(result.mode, "terra", input);
+    assert.equal(result.minimumMode, "terra", input);
+    assert.equal(result.features.context_dependent, true, input);
+    assert.equal(result.lunaEligibility.eligible, false, input);
+  }
+});
+
+test("offered tools do not block casual Luna routing unless the task requires them", () => {
+  const casual = classifyRequest({
+    input: "今天过得怎么样",
+    tools: [{ type: "function", name: "read_file" }],
+  });
+  assert.equal(casual.mode, "luna");
+  assert.equal(casual.features.requires_tools, false);
+
+  const required = classifyRequest({
+    input: "读取文件并总结",
+    tools: [{ type: "function", name: "read_file" }],
+  });
+  assert.equal(required.minimumMode, "terra");
+  assert.equal(required.mode, "terra");
+});
+
 test("normal scoped implementation selects terra", () => {
   assert.equal(classifyTask("请修改单个文件中的按钮文案并验证显示").mode, "terra");
   assert.equal(classifyTask("实现一个普通的 API 接口并运行测试").mode, "terra");
   assert.equal(classifyTask("读取项目文件，帮我判断这个函数为什么报错").mode, "terra");
+});
+
+test("signal dimensions are independent and recordable", () => {
+  const result = classifyRequest({
+    input: "实现一个 API 接口，分两步完成，运行测试并保持兼容性",
+  });
+  const names = result.signalDetails.map((item) => item.name);
+  assert.deepEqual(names, [
+    "simpleTask",
+    "reasoning",
+    "codePresence",
+    "multiStep",
+    "technicalDepth",
+    "scope",
+    "constraints",
+    "imperative",
+    "contextLength",
+    "toolRequirement",
+    "inputModality",
+  ]);
+  assert.equal(new Set(names).size, names.length);
+  assert.ok(result.signalDetails.every((item) => typeof item.weight === "number"));
+  assert.ok(result.signalDetails.every((item) => typeof item.contribution === "number"));
+  assert.ok(result.signalDetails.find((item) => item.name === "codePresence").value > 0);
+  assert.ok(result.signalDetails.find((item) => item.name === "multiStep").value > 0);
+  assert.ok(result.signalDetails.find((item) => item.name === "toolRequirement").value > 0);
+});
+
+test("low-confidence boundary decisions use terra", () => {
+  assert.equal(confidenceForScore(0.3), 0.5);
+  assert.equal(confidenceForScore(0.65), 0.5);
+  const result = classifyTask("用一句话解释这个函数");
+  assert.equal(result.initialMode, "terra");
+  assert.equal(result.mode, "terra");
+  assert.equal(result.ambiguityFallback, true);
+  assert.ok(result.confidence < 0.65);
 });
 
 test("complex and high-stakes research tasks select sol", () => {
@@ -52,6 +145,79 @@ test("only the auto model is routed", () => {
   const routed = routeRequest({ model: MODEL_AUTO, input: "帮我润色标题" });
   assert.equal(routed.body.model, "gpt-5.6-luna");
   assert.equal(routed.body.reasoning.effort, "low");
+});
+
+test("classification and model policy are separate layers", () => {
+  const classification = classifyRequest({ input: "你好" });
+  assert.equal(classification.mode, "luna");
+  assert.equal(Object.hasOwn(classification, "selectedModel"), false);
+
+  const policy = selectRoutingPolicy(classification);
+  assert.equal(policy.selectedMode, "luna");
+  assert.equal(policy.selectedModel, "gpt-5.6-luna");
+  assert.equal(policy.reasoningEffort, "low");
+});
+
+test("tools, context length, and input modalities become capability requirements", () => {
+  const body = {
+    input: [{
+      role: "user",
+      content: [
+        { type: "input_text", text: "读取文件并总结" },
+        { type: "input_image", image_url: "data:image/png;base64,AA==" },
+      ],
+    }],
+    tools: [{ type: "function", name: "read_file" }],
+    max_output_tokens: 1200,
+  };
+  const features = extractRequestFeatures(body);
+  assert.equal(features.requiresTools, true);
+  assert.equal(features.availableToolCount, 1);
+  assert.deepEqual(features.modalities, ["image", "text"]);
+
+  const classification = classifyRequest(body);
+  assert.equal(classification.minimumMode, "terra");
+  const policy = selectRoutingPolicy(classification);
+  assert.equal(policy.requiredCapabilities.tools, true);
+  assert.deepEqual(policy.requiredCapabilities.modalities, ["image", "text"]);
+  assert.equal(policy.requiredCapabilities.contextTokens, features.estimatedTotalTokens + 1200);
+  assert.deepEqual(policy.excludedCandidates, []);
+
+  const structured = classifyRequest({
+    input: "只回复结果",
+    text: { format: { type: "json_schema" } },
+  });
+  assert.equal(structured.features.structured_output, true);
+  assert.equal(structured.minimumMode, "terra");
+  assert.equal(structured.mode, "terra");
+
+  const toolResultFeatures = extractRequestFeatures({
+    input: [
+      { role: "user", content: [{ type: "input_text", text: "继续分析" }] },
+      { type: "function_call_output", output: "x".repeat(400) },
+    ],
+  });
+  assert.ok(toolResultFeatures.taskContextTokens > toolResultFeatures.latestTaskTokens);
+
+  const unsupported = classifyRequest({
+    input: [{ role: "user", content: [{ type: "input_audio", audio: "AA==" }] }],
+  });
+  const fallback = selectRoutingPolicy(unsupported);
+  assert.equal(fallback.selectedMode, "sol");
+  assert.equal(fallback.capabilityFallback, true);
+  assert.equal(fallback.excludedCandidates.length, 3);
+
+  const oversized = {
+    ...classifyRequest({ input: "普通任务" }),
+    features: {
+      ...classifyRequest({ input: "普通任务" }).features,
+      estimated_total_tokens: 400_000,
+    },
+  };
+  const contextFallback = selectRoutingPolicy(oversized);
+  assert.equal(contextFallback.selectedMode, "sol");
+  assert.equal(contextFallback.capabilityFallback, true);
+  assert.ok(contextFallback.excludedCandidates.every((item) => item.reasons.some((reason) => reason.startsWith("context:"))));
 });
 
 test("routing maps reasoning effort and preserves other reasoning fields", () => {

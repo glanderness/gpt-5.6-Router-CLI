@@ -3,8 +3,10 @@ import assert from "node:assert/strict";
 import http from "node:http";
 import { spawn } from "node:child_process";
 import { once } from "node:events";
+import os from "node:os";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
+import { CHATGPT_CODEX_BASE_URL } from "../auth-config.mjs";
 
 const projectDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -66,12 +68,32 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   const reserved = http.createServer();
   const routerPort = await listen(reserved);
   await new Promise((resolve) => reserved.close(resolve));
-  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], { cwd: projectDir, env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_UPSTREAM_BASE: `http://127.0.0.1:${upstreamPort}/v1` }, stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], { cwd: projectDir, env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_AUTH_MODE: "openai", ROUTER_API_KEY: "", ROUTER_UPSTREAM_BASE: `http://127.0.0.1:${upstreamPort}/v1` }, stdio: ["ignore", "pipe", "pipe"] });
   const logs = [];
   child.stdout.setEncoding("utf8");
   child.stdout.on("data", (chunk) => chunk.trim().split("\n").filter(Boolean).forEach((line) => { try { logs.push(JSON.parse(line)); } catch { /* startup diagnostics */ } }));
   t.after(async () => { child.kill("SIGTERM"); await new Promise((resolve) => upstream.close(resolve)); });
   await waitForHealth(routerPort);
+
+  const decisionResponse = await fetch(`http://127.0.0.1:${routerPort}/router/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      input: [{
+        role: "user",
+        content: [
+          { type: "input_text", text: "读取文件并总结" },
+          { type: "input_image", image_url: "data:image/png;base64,AA==" },
+        ],
+      }],
+      tools: [{ type: "function", name: "read_file" }],
+    }),
+  });
+  const localDecision = await decisionResponse.json();
+  assert.equal(localDecision.mode, "terra");
+  assert.equal(localDecision.confidence >= 0.65, true);
+  assert.deepEqual(localDecision.features.modalities, ["image", "text"]);
+  assert.equal(localDecision.requiredCapabilities.tools, true);
 
   const simple = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json", "x-request-id": "client-1" }, body: JSON.stringify({ model: "gpt-5.6-router", input: "帮我润色标题" }) });
   assert.equal((await simple.json()).model, "gpt-5.6-luna");
@@ -84,6 +106,14 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.equal(jsonLog.upstream_reported_reasoning_effort, "low");
   assert.deepEqual(jsonLog.usage, { input_tokens: 5, output_tokens: 3, total_tokens: 8 });
   assert.equal(jsonLog.client_request_id, "client-1");
+  assert.equal(jsonLog.routing_classified_mode, "luna");
+  assert.equal(typeof jsonLog.routing_confidence, "number");
+  assert.equal(jsonLog.routing_version, "signals-v3");
+  const decisionLog = await waitForLog(logs, (entry) => entry.event === "routing_decision" && entry.client_request_id === "client-1");
+  assert.equal(Array.isArray(decisionLog.routing_signal_details), true);
+  assert.equal(decisionLog.routing_signal_details.length, 11);
+  assert.deepEqual(decisionLog.routing_candidate_models, ["gpt-5.6-luna", "gpt-5.6-terra", "gpt-5.6-sol"]);
+  assert.deepEqual(decisionLog.routing_excluded_candidates, []);
 
   const passthrough = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ model: "gpt-5.6-terra", input: "普通任务", reasoning: { effort: "high" } }) });
   assert.equal((await passthrough.json()).model, "gpt-5.6-terra");
@@ -115,4 +145,102 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.match(receivedRequests[2].instructions, /Router 实际选择：gpt-5\.6-terra｜推理强度：medium/);
   assert.equal(receivedRequests[3].reasoning.effort, "high");
   assert.match(receivedRequests[3].instructions, /Router 实际选择：gpt-5\.6-sol｜推理强度：high/);
+});
+
+test("router uses the official ChatGPT Codex upstream for the current Codex login", async (t) => {
+  const reserved = http.createServer();
+  const routerPort = await listen(reserved);
+  await new Promise((resolve) => reserved.close(resolve));
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], {
+    cwd: projectDir,
+    env: { ...process.env, ROUTER_PORT: String(routerPort), ROUTER_AUTH_MODE: "auto", ROUTER_CODEX_LOGIN_MODE: "chatgpt", ROUTER_API_KEY: "", ROUTER_UPSTREAM_BASE: "", ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"), ROUTER_CODEX_CWD: os.tmpdir() },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => child.kill("SIGTERM"));
+  await waitForHealth(routerPort);
+
+  const health = await (await fetch(`http://127.0.0.1:${routerPort}/health`)).json();
+  assert.equal(health.authMode, "openai");
+  assert.equal(health.authSource, "codex_login");
+  assert.equal(health.codexLoginMode, "chatgpt");
+  assert.equal(health.upstreamBase, CHATGPT_CODEX_BASE_URL);
+  assert.equal(health.upstreamConfigured, true);
+
+  const decision = await fetch(`http://127.0.0.1:${routerPort}/router/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: "请只回复 OK" }),
+  });
+  assert.equal(decision.status, 200);
+  assert.equal((await decision.json()).selectedModel, "gpt-5.6-luna");
+});
+
+test("router uses the OpenAI API upstream for an OpenAI API key login", async (t) => {
+  const reserved = http.createServer();
+  const routerPort = await listen(reserved);
+  await new Promise((resolve) => reserved.close(resolve));
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], {
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      ROUTER_PORT: String(routerPort),
+      ROUTER_AUTH_MODE: "auto",
+      ROUTER_CODEX_LOGIN_MODE: "api_key",
+      ROUTER_API_KEY: "",
+      ROUTER_UPSTREAM_BASE: "",
+      ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"),
+      ROUTER_CODEX_CWD: os.tmpdir(),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => child.kill("SIGTERM"));
+  await waitForHealth(routerPort);
+
+  const health = await (await fetch(`http://127.0.0.1:${routerPort}/health`)).json();
+  assert.equal(health.authMode, "openai");
+  assert.equal(health.codexLoginMode, "api_key");
+  assert.equal(health.upstreamBase, "https://api.openai.com/v1");
+});
+
+test("provider key authentication requires an explicit upstream", async (t) => {
+  const reserved = http.createServer();
+  const routerPort = await listen(reserved);
+  await new Promise((resolve) => reserved.close(resolve));
+  const child = spawn(process.execPath, [path.join(projectDir, "server.mjs")], {
+    cwd: projectDir,
+    env: {
+      ...process.env,
+      ROUTER_PORT: String(routerPort),
+      ROUTER_AUTH_MODE: "provider_key",
+      ROUTER_API_KEY: "provider-key",
+      ROUTER_UPSTREAM_BASE: "",
+      ROUTER_CODEX_CONFIG: path.join(os.tmpdir(), "missing-codex-config.toml"),
+      ROUTER_CODEX_CWD: os.tmpdir(),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  t.after(() => child.kill("SIGTERM"));
+  await waitForHealth(routerPort);
+
+  const health = await (await fetch(`http://127.0.0.1:${routerPort}/health`)).json();
+  assert.equal(health.upstreamConfigured, false);
+  assert.equal(health.configurationError.includes("ROUTER_UPSTREAM_BASE is required"), true);
+
+  const decision = await fetch(`http://127.0.0.1:${routerPort}/router/decision`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ input: "请只回复 OK" }),
+  });
+  assert.equal(decision.status, 200);
+  assert.equal((await decision.json()).selectedModel, "gpt-5.6-luna");
+
+  const response = await fetch(`http://127.0.0.1:${routerPort}/v1/responses`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-5.6-router", input: "请只回复 OK" }),
+  });
+  assert.equal(response.status, 503);
+  const payload = await response.json();
+  assert.equal(payload.error.type, "router_configuration_error");
+  assert.match(payload.error.message, /ROUTER_UPSTREAM_BASE is required/);
 });
