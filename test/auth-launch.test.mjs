@@ -78,6 +78,7 @@ test("Codex launch uses OpenAI authentication for the current Codex login", asyn
   const result = runRouter(directory, captureFile);
   assert.equal(result.status, 0, result.stderr);
   const args = (await readFile(captureFile, "utf8")).split("\n").filter(Boolean);
+  assert.equal(args.includes('model_providers.gpt_5_6_router.base_url="http://127.0.0.1:8788/v1"'), true);
   assert.equal(args.includes("model_providers.gpt_5_6_router.requires_openai_auth=true"), true);
   assert.equal(args.some((value) => value.includes("model_providers.gpt_5_6_router.env_key")), false);
   assert.match(result.stderr, /current Codex login \(chatgpt\)/);

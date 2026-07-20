@@ -33,29 +33,45 @@ prepare_auth_environment() {
   export ROUTER_CODEX_LOGIN_MODE
 }
 
+health_payload() {
+  curl -fsS --max-time 2 "http://127.0.0.1:$PORT/health" 2>/dev/null || true
+}
+
 is_ready() {
   local health
-  health="$(curl -fsS --max-time 2 "http://localhost:$PORT/health" 2>/dev/null || true)"
-  [[ "$health" == *'"service":"gpt5.6-router"'* ]]
+  health="$(health_payload)"
+  [[ -n "$health" ]] || return 1
+  "$NODE_BIN" -e '
+    const [healthJson, expectedScriptPath] = process.argv.slice(1);
+    const health = JSON.parse(healthJson);
+    process.exit(
+      health.service === "gpt5.6-router" && health.scriptPath === expectedScriptPath
+        ? 0
+        : 1
+    );
+  ' "$health" "$SCRIPT_DIR/server.mjs" 2>/dev/null
 }
 
 configuration_matches() {
   local health expected
-  health="$(curl -fsS --max-time 2 "http://localhost:$PORT/health" 2>/dev/null || true)"
+  health="$(health_payload)"
   [[ -n "$health" ]] || return 1
   expected="$(resolved_auth_json)" || return 1
   "$NODE_BIN" -e '
-    const [healthJson, expectedJson] = process.argv.slice(1);
+    const [healthJson, expectedJson, expectedScriptPath] = process.argv.slice(1);
     const health = JSON.parse(healthJson);
     const expected = JSON.parse(expectedJson);
     process.exit(
       health.service === "gpt5.6-router"
+      && health.scriptPath === expectedScriptPath
       && health.authMode === expected.selectedMode
+      && health.authSource === expected.authSource
+      && health.codexLoginMode === expected.codexLoginMode
       && health.upstreamBase === expected.upstreamBase
         ? 0
         : 1
     );
-  ' "$health" "$expected"
+  ' "$health" "$expected" "$SCRIPT_DIR/server.mjs"
 }
 
 read_pid() {
@@ -64,6 +80,23 @@ read_pid() {
   pid="$(<"$PID_FILE")"
   [[ "$pid" =~ ^[0-9]+$ ]] || return 1
   printf '%s' "$pid"
+}
+
+read_health_pid() {
+  local health
+  health="$(health_payload)"
+  [[ -n "$health" ]] || return 1
+  "$NODE_BIN" -e '
+    const [healthJson, expectedScriptPath] = process.argv.slice(1);
+    const health = JSON.parse(healthJson);
+    if (
+      health.service === "gpt5.6-router"
+      && health.scriptPath === expectedScriptPath
+      && Number.isInteger(health.processId)
+      && health.processId > 1
+    ) process.stdout.write(String(health.processId));
+    else process.exit(1);
+  ' "$health" "$SCRIPT_DIR/server.mjs" 2>/dev/null
 }
 
 pid_belongs_to_service() {
@@ -81,8 +114,13 @@ case "${1:-status}" in
     prepare_auth_environment
 
     if configuration_matches; then
-      echo "Router service is already running at http://localhost:$PORT"
+      echo "Router service is already running at http://127.0.0.1:$PORT"
       exit 0
+    fi
+
+    if [[ -n "$(health_payload)" ]] && ! is_ready; then
+      echo "Router port $PORT is already used by a different local service." >&2
+      exit 1
     fi
 
     if is_ready; then "$0" stop >/dev/null; fi
@@ -93,7 +131,7 @@ case "${1:-status}" in
 
     for _ in {1..50}; do
       if is_ready; then
-        echo "Router service started at http://localhost:$PORT"
+        echo "Router service started at http://127.0.0.1:$PORT"
         exit 0
       fi
       sleep 0.1
@@ -103,7 +141,8 @@ case "${1:-status}" in
     exit 1
     ;;
   stop)
-    if pid="$(read_pid 2>/dev/null)" && kill -0 "$pid" 2>/dev/null && pid_belongs_to_service "$pid"; then
+    pid="$(read_pid 2>/dev/null || read_health_pid 2>/dev/null || true)"
+    if [[ "$pid" =~ ^[0-9]+$ ]] && kill -0 "$pid" 2>/dev/null && pid_belongs_to_service "$pid"; then
       kill "$pid"
       for _ in {1..30}; do
         kill -0 "$pid" 2>/dev/null || break
@@ -131,8 +170,11 @@ case "${1:-status}" in
     ;;
   status)
     if is_ready; then
-      curl -fsS "http://localhost:$PORT/health"
+      curl -fsS "http://127.0.0.1:$PORT/health"
       echo
+    elif [[ -n "$(health_payload)" ]]; then
+      echo "Router port $PORT is used by a different local service." >&2
+      exit 1
     else
       echo "Router service is not running."
       exit 1

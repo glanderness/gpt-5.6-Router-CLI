@@ -7,7 +7,7 @@ GPT5.6-Router 是一个面向 Codex CLI 的本地模型 Router。你只需在 Co
 ```text
 Codex CLI
   ↓ model: gpt-5.6-router
-Local Router (localhost)
+Local Router (127.0.0.1)
   ↓ selected model + reasoning effort
 Your Responses API provider
 ```
@@ -115,7 +115,7 @@ codex-router exec "请总结 README"
 常用配置：
 
 ```dotenv
-ROUTER_HOST=localhost
+ROUTER_HOST=127.0.0.1
 ROUTER_PORT=8788
 
 # 默认读取当前 Codex Provider。通常不需要修改下面三项。
@@ -205,7 +205,7 @@ codex-router-service status
 只检查路由判断，不请求上游：
 
 ```bash
-curl -sS http://localhost:8788/router/decision \
+curl -sS http://127.0.0.1:8788/router/decision \
   -H 'content-type: application/json' \
   -d '{"input":"请做一份行业研究报告"}'
 ```

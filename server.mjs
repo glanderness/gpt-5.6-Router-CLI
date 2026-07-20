@@ -1,12 +1,15 @@
 import crypto from "node:crypto";
 import http from "node:http";
 import { Readable } from "node:stream";
+import { fileURLToPath } from "node:url";
 import { resolveAuthConfig } from "./auth-config.mjs";
 import { discoverCodexUpstream } from "./codex-upstream-config.mjs";
 import { MODEL_AUTO, routeRequest } from "./router.mjs";
 
-const host = process.env.ROUTER_HOST || "localhost";
+const configuredHost = process.env.ROUTER_HOST || "127.0.0.1";
+const host = configuredHost === "localhost" ? "127.0.0.1" : configuredHost;
 const port = Number(process.env.ROUTER_PORT || 8788);
+const serverScriptPath = fileURLToPath(import.meta.url);
 let authConfig = null;
 let upstreamBase = null;
 let upstreamConfigurationError = null;
@@ -21,6 +24,16 @@ try {
 }
 const logRequests = process.env.ROUTER_LOG_REQUESTS === "1";
 const logTaskPreview = process.env.ROUTER_LOG_TASK_PREVIEW === "1";
+const HOP_BY_HOP_HEADERS = new Set([
+  "connection",
+  "keep-alive",
+  "proxy-authenticate",
+  "proxy-authorization",
+  "te",
+  "trailer",
+  "transfer-encoding",
+  "upgrade",
+]);
 
 function log(event, fields = {}) {
   console.log(JSON.stringify({ timestamp: new Date().toISOString(), event, ...fields }));
@@ -56,7 +69,8 @@ function upstreamUrl(pathname) {
 function forwardedHeaders(headers) {
   const result = {};
   for (const [key, value] of Object.entries(headers)) {
-    if (value == null || ["host", "content-length", "connection"].includes(key.toLowerCase())) continue;
+    const normalizedKey = key.toLowerCase();
+    if (value == null || normalizedKey === "host" || normalizedKey === "content-length" || HOP_BY_HOP_HEADERS.has(normalizedKey)) continue;
     result[key] = value;
   }
   return result;
@@ -65,9 +79,20 @@ function forwardedHeaders(headers) {
 function responseHeaders(headers) {
   const result = {};
   for (const [key, value] of headers.entries()) {
-    if (!["content-length", "content-encoding", "connection"].includes(key.toLowerCase())) result[key] = value;
+    const normalizedKey = key.toLowerCase();
+    if (normalizedKey !== "content-length" && normalizedKey !== "content-encoding" && !HOP_BY_HOP_HEADERS.has(normalizedKey)) {
+      result[key] = value;
+    }
   }
   return result;
+}
+
+function errorCauseDetails(error) {
+  const cause = error?.cause;
+  return {
+    error_cause_code: typeof cause?.code === "string" ? cause.code : null,
+    error_cause_message: typeof cause?.message === "string" ? cause.message : null,
+  };
 }
 
 async function readBody(request) {
@@ -147,7 +172,7 @@ async function forwardSse(upstreamResponse, response, record, startedAt) {
     log("response_completed", { ...record, ...state.details, upstream_status: upstreamResponse.status, total_duration_ms: Date.now() - startedAt, first_byte_ms: firstByteMs, stream: true, stream_normal_end: !clientDisconnected, stream_protocol_complete: state.saw_done || state.saw_completion_event, sse_parse_errors: state.parse_errors, error_type: clientDisconnected ? "client_disconnected" : null });
   } catch (error) {
     if (!response.writableEnded) response.end();
-    log("response_failed", { ...record, upstream_status: upstreamResponse.status, total_duration_ms: Date.now() - startedAt, first_byte_ms: firstByteMs, stream: true, stream_normal_end: false, error_type: clientDisconnected ? "client_disconnected" : "stream_forward_error", error_message: error?.message || String(error) });
+    log("response_failed", { ...record, upstream_status: upstreamResponse.status, total_duration_ms: Date.now() - startedAt, first_byte_ms: firstByteMs, stream: true, stream_normal_end: false, error_type: clientDisconnected ? "client_disconnected" : "stream_forward_error", error_message: error?.message || String(error), ...errorCauseDetails(error) });
   } finally { response.removeListener("close", onClose); }
 }
 
@@ -161,6 +186,8 @@ const server = http.createServer(async (request, response) => {
       return sendJson(response, 200, {
         ok: true,
         service: "gpt5.6-router",
+        scriptPath: serverScriptPath,
+        processId: process.pid,
         authMode: authConfig?.selectedMode || null,
         authSource: authConfig?.authSource || null,
         codexLoginMode: authConfig?.codexLoginMode || null,
@@ -247,7 +274,7 @@ const server = http.createServer(async (request, response) => {
     if (!upstreamResponse.body) return response.end();
     Readable.fromWeb(upstreamResponse.body).pipe(response);
   } catch (error) {
-    log("response_failed", { ...(record || {}), upstream_status: null, total_duration_ms: Date.now() - startedAt, stream: false, stream_normal_end: false, error_type: error instanceof SyntaxError ? "invalid_request_json" : "upstream_request_error", error_message: error?.message || String(error) });
+    log("response_failed", { ...(record || {}), upstream_status: null, total_duration_ms: Date.now() - startedAt, stream: false, stream_normal_end: false, error_type: error instanceof SyntaxError ? "invalid_request_json" : "upstream_request_error", error_message: error?.message || String(error), ...errorCauseDetails(error) });
     if (!response.headersSent) sendJson(response, 502, { error: { message: "Local router request failed" } }); else response.end();
   }
 });
@@ -255,6 +282,7 @@ const server = http.createServer(async (request, response) => {
 server.listen(port, host, () => log("server_started", {
   host,
   port,
+  script_path: serverScriptPath,
   auth_mode: authConfig?.selectedMode || null,
   auth_source: authConfig?.authSource || null,
   codex_login_mode: authConfig?.codexLoginMode || null,

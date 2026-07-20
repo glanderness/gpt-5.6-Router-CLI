@@ -109,7 +109,7 @@ echo "Router upstream: $resolved_upstream_base" >&2
 exec "$CODEX_COMMAND" \
   -c 'model_provider="gpt_5_6_router"' \
   -c 'model_providers.gpt_5_6_router.name="GPT5.6-Router"' \
-  -c 'model_providers.gpt_5_6_router.base_url="http://localhost:'"$PORT"'/v1"' \
+  -c 'model_providers.gpt_5_6_router.base_url="http://127.0.0.1:'"$PORT"'/v1"' \
   -c 'model_providers.gpt_5_6_router.wire_api="responses"' \
   "${auth_config_args[@]}" \
   -c 'model_reasoning_effort="low"' \
