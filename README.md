@@ -18,6 +18,180 @@
   </tr>
 </table>
 
+## Router 系统图
+
+GPT5.6-Router 的核心思路是：Codex CLI 始终只选择虚拟模型 `gpt-5.6-router`，本地 Router 再根据当前任务特征选择 Luna、Terra 或 Sol，并将改写后的 Responses 请求发送到用户已配置的上游 Provider。
+
+<table>
+  <tr>
+    <td align="center">
+      <strong>① 用户入口</strong><br><br>
+      <code>codex-router</code><br>
+      Codex CLI<br>
+      <code>gpt-5.6-router</code>
+    </td>
+    <td align="center">→</td>
+    <td align="center">
+      <strong>② 启动与认证</strong><br><br>
+      检测 Codex 登录模式<br>
+      读取当前 Provider<br>
+      启动或复用本地服务
+    </td>
+    <td align="center">→</td>
+    <td align="center">
+      <strong>③ 本地 HTTP Router</strong><br><br>
+      <code>127.0.0.1:8788/v1</code><br>
+      <code>server.mjs</code><br>
+      <code>POST /v1/responses</code>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="5" align="center">↓ 请求进入本地决策链</td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>④ 特征提取</strong><br><br>
+      最后一条任务<br>
+      上下文长度<br>
+      工具与输入类型<br>
+      结构化输出
+    </td>
+    <td align="center">→</td>
+    <td align="center">
+      <strong>⑤ 复杂度分类</strong><br><br>
+      人工指定<br>
+      Luna 资格层<br>
+      11 维加权信号<br>
+      档位下限与 Terra 模糊边界
+    </td>
+    <td align="center">→</td>
+    <td align="center">
+      <strong>⑥ 模型策略</strong><br><br>
+      档位到模型映射<br>
+      推理强度映射<br>
+      工具、图片和上下文<br>
+      能力匹配
+    </td>
+  </tr>
+  <tr>
+    <td colspan="5" align="center">↓ 改写 <code>model</code> 与 <code>reasoning.effort</code></td>
+  </tr>
+  <tr>
+    <td align="center">
+      <strong>Luna</strong><br>
+      <code>gpt-5.6-luna</code><br>
+      <code>low</code><br>
+      明确的简单对话
+    </td>
+    <td align="center">或</td>
+    <td align="center">
+      <strong>Terra</strong><br>
+      <code>gpt-5.6-terra</code><br>
+      <code>medium</code><br>
+      日常工作与模糊边界
+    </td>
+    <td align="center">或</td>
+    <td align="center">
+      <strong>Sol</strong><br>
+      <code>gpt-5.6-sol</code><br>
+      <code>high</code><br>
+      强推理与完整系统任务
+    </td>
+  </tr>
+  <tr>
+    <td colspan="5" align="center">↓ 发送到已配置的 Responses API Provider</td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <strong>⑦ 上游 Provider</strong><br><br>
+      ChatGPT / Plus<br>
+      OpenAI API<br>
+      第三方 Responses Provider
+    </td>
+    <td align="center">→</td>
+    <td colspan="2" align="center">
+      <strong>⑧ 响应与可观测性</strong><br><br>
+      透传流式或非流式响应<br>
+      记录实际模型与推理强度<br>
+      记录路由理由、耗时与用量
+    </td>
+  </tr>
+</table>
+
+### 核心路径
+
+<table>
+  <thead>
+    <tr>
+      <th>路径</th>
+      <th>执行链</th>
+      <th>用途</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><strong>启动路径</strong></td>
+      <td><code>codex-router</code> → 检测登录与 Provider → <code>router-service.sh ensure</code> → 临时 Codex 参数</td>
+      <td>只修改当前 Router 进程的连接方式，不写入用户原有 Codex 配置。</td>
+    </tr>
+    <tr>
+      <td><strong>主路由路径</strong></td>
+      <td><code>POST /v1/responses</code> → <code>routeRequest()</code> → 特征与分类 → 策略选择 → 请求改写 → 上游</td>
+      <td>只对 <code>gpt-5.6-router</code> 执行动态选择，其他模型请求保持原样。</td>
+    </tr>
+    <tr>
+      <td><strong>简单任务路径</strong></td>
+      <td>人工指定优先；否则检查 Luna 资格；再否则进入 11 维加权分类</td>
+      <td>明确的短对话优先 Luna；不满足资格时再进入完整评分链。</td>
+    </tr>
+    <tr>
+      <td><strong>能力匹配路径</strong></td>
+      <td>分类档位 → 工具 / 图片 / 上下文检查 → 候选模型 → 最终模型</td>
+      <td>分类与具体模型解耦；当目标档位不满足请求时，优先选择能力合适的更高档位。</td>
+    </tr>
+    <tr>
+      <td><strong>响应路径</strong></td>
+      <td>上游响应 → SSE 或 JSON 解析 → Codex CLI → <code>response_completed</code> 日志</td>
+      <td>返回内容保持透传，同时记录上游明确返回的模型和推理强度。</td>
+    </tr>
+  </tbody>
+</table>
+
+### 辅助接口与运行路径
+
+<table>
+  <thead>
+    <tr>
+      <th>接口或文件</th>
+      <th>作用</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td><code>GET /v1/models</code></td>
+      <td>转发上游模型目录，并加入虚拟模型 <code>gpt-5.6-router</code>。</td>
+    </tr>
+    <tr>
+      <td><code>GET /health</code></td>
+      <td>返回本地服务状态、认证模式、登录来源和当前上游地址。</td>
+    </tr>
+    <tr>
+      <td><code>POST /router/decision</code></td>
+      <td>只返回本地路由决策，用于检查分类结果，不发送到上游。</td>
+    </tr>
+    <tr>
+      <td><code>~/.local/share/gpt5.6-router/router.log</code></td>
+      <td>记录请求、决策、实际模型、推理强度、耗时和用量。</td>
+    </tr>
+    <tr>
+      <td><code>~/.local/share/gpt5.6-router/router-error.log</code></td>
+      <td>记录本地服务运行期间的错误输出。</td>
+    </tr>
+  </tbody>
+</table>
+
+更完整的分类规则、权重和日志字段见 [Router Architecture](docs/ROUTER_ARCHITECTURE.md)。
+
 # GPT5.6-Router
 
 GPT5.6-Router 是一个面向 Codex CLI 的本地模型 Router。你只需在 Codex 中选择稳定模型标识 `gpt-5.6-router`，Router 就会根据任务复杂度，在 Luna、Terra 与 Sol 三档模型和推理强度之间自动选择。
