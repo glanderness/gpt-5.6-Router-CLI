@@ -1,3 +1,23 @@
+<table>
+  <tr>
+    <td align="center"><strong>找优质算力就上 BeefAPI</strong></td>
+    <td align="center">
+      <strong>算力网址</strong><br>
+      <a href="https://beefapi.com/">https://beefapi.com/</a>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <h3 align="center">个人联系方式</h3>
+      <p>如果大家对于这个项目或者 AI 自媒体、创业感兴趣，可以直接扫描右侧二维码，添加我的企业微信来找我聊天。</p>
+    </td>
+    <td width="50%" align="center">
+      <strong>我的二维码</strong><br><br>
+      <img src="assets/lucas-wecom-qr.png" alt="Lucas 企业微信二维码" width="360">
+    </td>
+  </tr>
+</table>
+
 # GPT5.6-Router
 
 GPT5.6-Router 是一个面向 Codex CLI 的本地模型 Router。你只需在 Codex 中选择稳定模型标识 `gpt-5.6-router`，Router 就会根据任务复杂度，在 Luna、Terra 与 Sol 三档模型和推理强度之间自动选择。
