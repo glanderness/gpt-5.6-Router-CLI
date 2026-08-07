@@ -1,5 +1,9 @@
 import { classifyRequest, extractLatestUserText } from "./router-signals.mjs";
 import { models, reasoningEfforts, selectRoutingPolicy } from "./router-policy.mjs";
+import {
+  normalizeContextLineage,
+  normalizeRoutingIntent,
+} from "./runtime-contracts.mjs";
 
 export const MODEL_AUTO = process.env.ROUTER_AUTO_MODEL || "gpt-5.6-router";
 export { classifyRequest, classifyTask, confidenceForScore, extractComplexitySignals, extractLatestUserText, extractRequestFeatures } from "./router-signals.mjs";
@@ -28,9 +32,16 @@ export function routeRequest(body) {
   const latestUserText = extractLatestUserText(body);
   const classification = classifyRequest(body);
   const policy = selectRoutingPolicy(classification);
+  const routingIntent = normalizeRoutingIntent(body.routing_intent);
+  const contextLineage = normalizeContextLineage(body.context_lineage);
   const footerLine = responseFooterLine(policy.selectedModel, policy.reasoningEffort);
+  const upstreamInput = Object.fromEntries(
+    Object.entries(body).filter(([key]) => (
+      key !== "routing_intent" && key !== "context_lineage"
+    )),
+  );
   const routedBody = {
-    ...body,
+    ...upstreamInput,
     model: policy.selectedModel,
     reasoning: {
       ...(body.reasoning && typeof body.reasoning === "object" ? body.reasoning : {}),
@@ -64,6 +75,13 @@ export function routeRequest(body) {
       candidateModels: policy.candidateModels,
       excludedCandidates: policy.excludedCandidates,
       capabilityFallback: policy.capabilityFallback,
+      routingIntent,
+      routingResolution: {
+        model: policy.selectedModel,
+        reasoningEffort: policy.reasoningEffort,
+        fallbackAllowed: routingIntent.fallback_allowed,
+      },
+      contextLineage,
       footerLine: responseFooterEnabled() ? footerLine : null,
       preview: latestUserText.slice(0, 120).replace(/\s+/g, " "),
     },

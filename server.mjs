@@ -5,6 +5,11 @@ import { fileURLToPath } from "node:url";
 import { resolveAuthConfig } from "./auth-config.mjs";
 import { discoverCodexUpstream } from "./codex-upstream-config.mjs";
 import { MODEL_AUTO, routeRequest } from "./router.mjs";
+import {
+  assertSafeUpstreamPath,
+  telemetryConfigEpoch,
+  telemetryConfigFromEnv,
+} from "./runtime-contracts.mjs";
 
 const configuredHost = process.env.ROUTER_HOST || "127.0.0.1";
 const host = configuredHost === "localhost" ? "127.0.0.1" : configuredHost;
@@ -63,6 +68,7 @@ function sendJson(response, status, value) {
 }
 
 function upstreamUrl(pathname) {
+  assertSafeUpstreamPath(pathname);
   return `${upstreamBase}${pathname.replace(/^\/v1(?=\/|$)/, "")}`;
 }
 
@@ -124,6 +130,12 @@ function responseDetails(payload) {
       : (typeof response?.reasoning_effort === "string" ? response.reasoning_effort : null),
     upstream_response_id: typeof response?.id === "string" ? response.id : null,
     usage: response?.usage && typeof response.usage === "object" ? response.usage : null,
+    observed_execution: {
+      model: typeof response?.model === "string" ? response.model : null,
+      reasoning_effort: typeof response?.reasoning?.effort === "string"
+        ? response.reasoning.effort
+        : (typeof response?.reasoning_effort === "string" ? response.reasoning_effort : null),
+    },
   };
 }
 
@@ -140,9 +152,13 @@ function parseSseChunk(state, text) {
       const event = payload?.type || "";
       if (event === "response.completed" || event === "response.done" || payload?.response) state.saw_completion_event = true;
       const details = responseDetails(payload);
-      if (details.upstream_reported_model !== null) state.details.upstream_reported_model = details.upstream_reported_model;
+      if (details.upstream_reported_model !== null) {
+        state.details.upstream_reported_model = details.upstream_reported_model;
+        state.details.observed_execution.model = details.upstream_reported_model;
+      }
       if (details.upstream_reported_reasoning_effort !== null) {
         state.details.upstream_reported_reasoning_effort = details.upstream_reported_reasoning_effort;
+        state.details.observed_execution.reasoning_effort = details.upstream_reported_reasoning_effort;
       }
       if (details.upstream_response_id !== null) state.details.upstream_response_id = details.upstream_response_id;
       if (details.usage !== null) state.details.usage = details.usage;
@@ -232,6 +248,10 @@ const server = http.createServer(async (request, response) => {
         routing_ambiguity_fallback: routed.decision?.ambiguityFallback ?? false,
         routing_capability_fallback: routed.decision?.capabilityFallback ?? false,
         routing_version: routed.decision?.classificationVersion || null,
+        routing_intent: routed.decision?.routingIntent || null,
+        routing_resolution: routed.decision?.routingResolution || null,
+        context_lineage: routed.decision?.contextLineage || null,
+        telemetry_config_epoch: telemetryConfigEpoch(telemetryConfigFromEnv()),
       };
       log("request_started", record);
       if (routed.decision) {
