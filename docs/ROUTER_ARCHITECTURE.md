@@ -72,6 +72,7 @@ Policy Selection
 Request Rewrite
   │ model
   │ reasoning.effort
+  │ advisory routing intent (local contract only)
   │ 最终回答显示行
   ▼
 Configured Responses API Provider
@@ -99,6 +100,8 @@ Response + Observability
 | `structured_output` | 是否要求结构化输出 |
 | `simple_intent` | 日常对话意图类别、证据与置信度 |
 | `context_dependent` | 最新请求是否依赖上一轮上下文 |
+| `routing_intent` | 低基数的模型类、服务层级、成本/延迟姿态和回退意图；不授予权限 |
+| `context_lineage` | agent path、窗口、压缩、重置、继承历史和归一化压力聚合；不含原始窗口 ID |
 
 token 估算对 ASCII 字符使用约 `4 字符/token`，对非 ASCII 字符使用约 `1 字符/token`，目的是获得稳定的本地近似值，不增加额外模型调用。
 
@@ -324,6 +327,10 @@ minimumMode=Sol → gpt-5.6-sol → high
 - `selected_reasoning_effort`
 - `upstream_reported_model`
 - `upstream_reported_reasoning_effort`
+- `routing_intent`
+- `routing_resolution`
+- `observed_execution`
+- `telemetry_config_epoch`
 
 因此可以分别确认“分类器想选什么”“策略层实际发了什么”以及“上游明确返回了什么”。
 
@@ -334,5 +341,7 @@ minimumMode=Sol → gpt-5.6-sol → high
 - 三个 GPT-5.6 档位当前能力元数据高度相似，能力过滤主要为后续模型差异和异常输入提供稳定接口。
 - 当前没有引入向量相似度；低置信度请求统一使用 Terra。
 - 当前没有自动回退到第二个上游模型，策略层只负责首次选择。
+- 路由意图只记录为本地 advisory metadata，不会伪造私有上游 header，也不会授予工具、网络或更高权限。
+- telemetry 配置变更递增聚合 epoch；epoch 隔离统计边界，但不改变 governor budget。
 
 后续最有价值的工作，是利用真实日志建立标注数据集，校准信号权重、阈值和置信度，而不是继续扩大单一关键词列表。

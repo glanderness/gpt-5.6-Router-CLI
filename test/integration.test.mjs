@@ -104,6 +104,10 @@ test("router keeps forwarding intact and logs confirmed upstream response detail
   assert.equal(jsonLog.selected_reasoning_effort, "low");
   assert.equal(jsonLog.upstream_reported_model, "gpt-5.6-luna");
   assert.equal(jsonLog.upstream_reported_reasoning_effort, "low");
+  assert.equal(jsonLog.observed_execution.model, "gpt-5.6-luna");
+  assert.equal(jsonLog.routing_intent.fallback_allowed, true);
+  assert.equal(jsonLog.routing_resolution.model, "gpt-5.6-luna");
+  assert.equal(typeof jsonLog.telemetry_config_epoch, "number");
   assert.deepEqual(jsonLog.usage, { input_tokens: 5, output_tokens: 3, total_tokens: 8 });
   assert.equal(jsonLog.client_request_id, "client-1");
   assert.equal(jsonLog.routing_classified_mode, "luna");
